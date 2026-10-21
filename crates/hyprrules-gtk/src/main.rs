@@ -33,6 +33,8 @@ pub enum Msg {
     AddWindowRule,
     ToggleWindowRule(usize, bool),
     RemoveWindowRule(usize),
+    /// Drag & drop: move rule `from` to position `to`.
+    MoveWindowRule(usize, usize),
     AddWorkspaceRule,
     RemoveWorkspaceRule(usize),
     Refresh,
@@ -117,6 +119,12 @@ impl SimpleComponent for App {
             Msg::RemoveWindowRule(index) => {
                 if index < self.rules.window_rules.len() {
                     self.rules.window_rules.remove(index);
+                    self.changed(&sender);
+                }
+            }
+            Msg::MoveWindowRule(from, to) => {
+                if from != to {
+                    self.rules.move_window_rule(from, to);
                     self.changed(&sender);
                 }
             }

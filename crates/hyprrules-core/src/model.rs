@@ -62,6 +62,17 @@ impl RuleSet {
         self.window_rules.push(rule);
     }
 
+    /// Moves a window rule so it ends up at index `to`. Order matters:
+    /// Hyprland applies later rules on top of earlier ones.
+    pub fn move_window_rule(&mut self, from: usize, to: usize) {
+        let len = self.window_rules.len();
+        if from >= len || from == to {
+            return;
+        }
+        let rule = self.window_rules.remove(from);
+        self.window_rules.insert(to.min(len - 1), rule);
+    }
+
     /// Binds a workspace to a monitor, replacing an existing binding.
     pub fn set_workspace_monitor(&mut self, workspace: &str, monitor: &str) {
         match self
@@ -123,6 +134,24 @@ mod tests {
         set.add_window_rule(WindowRule::for_class("discord", "2"));
         set.add_window_rule(WindowRule::for_class("discord", "3"));
         assert_eq!(set.window_rules[1].name, "discord-2");
+    }
+
+    #[test]
+    fn move_window_rule_reorders() {
+        let mut set = RuleSet::default();
+        for class in ["a", "b", "c"] {
+            set.add_window_rule(WindowRule::for_class(class, "1"));
+        }
+        let names = |s: &RuleSet| s.window_rules.iter().map(|r| r.name.clone()).collect::<Vec<_>>();
+
+        set.move_window_rule(0, 2);
+        assert_eq!(names(&set), ["b", "c", "a"]);
+        set.move_window_rule(2, 0);
+        assert_eq!(names(&set), ["a", "b", "c"]);
+        set.move_window_rule(1, 99);
+        assert_eq!(names(&set), ["a", "c", "b"]);
+        set.move_window_rule(99, 0);
+        assert_eq!(names(&set), ["a", "c", "b"]);
     }
 
     #[test]

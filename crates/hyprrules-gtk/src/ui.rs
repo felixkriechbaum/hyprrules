@@ -3,6 +3,7 @@
 
 use hyprrules_core::{Client, Monitor, RuleSet, WindowRule};
 use relm4::adw::prelude::*;
+use relm4::gtk::gdk;
 use relm4::{ComponentSender, adw, gtk};
 
 use crate::{App, Msg};
@@ -123,6 +124,7 @@ impl Ui {
         self.window_rules.remove_all();
         for (i, rule) in rules.window_rules.iter().enumerate() {
             let row = action_row(&rule.name, &describe_window_rule(rule, rules));
+            make_reorderable(&row, i, sender);
 
             let enabled = gtk::Switch::builder()
                 .active(rule.enabled)
@@ -148,6 +150,39 @@ impl Ui {
             self.workspace_rules.append(&row);
         }
     }
+}
+
+/// Adds a drag handle to `row` and lets other rows be dropped onto it.
+/// The dragged payload is the rule index.
+fn make_reorderable(row: &adw::ActionRow, index: usize, sender: &ComponentSender<App>) {
+    let handle = gtk::Image::builder()
+        .icon_name("list-drag-handle-symbolic")
+        .tooltip_text("Ziehen zum Umsortieren – spätere Regeln haben Vorrang")
+        .css_classes(["dim-label"])
+        .build();
+    row.add_prefix(&handle);
+
+    let source = gtk::DragSource::builder()
+        .actions(gdk::DragAction::MOVE)
+        .content(&gdk::ContentProvider::for_value(&(index as u32).to_value()))
+        .build();
+    let dragged = row.clone();
+    source.connect_drag_begin(move |source, _| {
+        let icon = gtk::WidgetPaintable::new(Some(&dragged));
+        source.set_icon(Some(&icon), 0, 0);
+    });
+    handle.add_controller(source);
+
+    let target = gtk::DropTarget::new(u32::static_type(), gdk::DragAction::MOVE);
+    let sender = sender.clone();
+    target.connect_drop(move |_, value, _, _| match value.get::<u32>() {
+        Ok(from) => {
+            sender.input(Msg::MoveWindowRule(from as usize, index));
+            true
+        }
+        Err(_) => false,
+    });
+    row.add_controller(target);
 }
 
 fn describe_window_rule(rule: &WindowRule, rules: &RuleSet) -> String {
