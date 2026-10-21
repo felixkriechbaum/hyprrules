@@ -1,0 +1,8 @@
+[package]
+name = "hyprrules-gtk"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+hyprrules-core = { version = "0.1.0", path = "../hyprrules-core" }
+relm4 = { version = "0.11.0", features = ["gnome_45", "libadwaita", "macros"], default-features = false }
