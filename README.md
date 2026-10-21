@@ -1,9 +1,9 @@
 # hyprrules
 
-GTK4/libadwaita-Oberfläche für Hyprland Window- und Workspace-Rules (Lua-Config, Hyprland ≥ 0.55).
+A GTK4/libadwaita UI for Hyprland window and workspace rules (Lua config, Hyprland ≥ 0.55).
 
-Beispiel: „Discord und Spotify öffnen immer auf Workspace 2, und Workspace 2 liegt auf Monitor `HDMI-A-1`“.
-Daraus erzeugt hyprrules:
+Example: "Discord and Spotify always open on workspace 2, and workspace 2 lives on monitor `HDMI-A-1`".
+hyprrules turns that into:
 
 ```lua
 hl.workspace_rule({ workspace = "2", monitor = "HDMI-A-1" })
@@ -15,11 +15,11 @@ hl.window_rule({
 })
 ```
 
-## So funktioniert es
+## How it works
 
-- Die Regeln liegen in `~/.config/hyprrules/rules.toml` (Quelle der Wahrheit).
-- Beim Speichern wird `~/.config/hypr/hyprrules.lua` generiert und `hyprctl reload` ausgelöst.
-- Deine eigene Config wird **nie** angefasst. Einmalig in `hyprland.lua` einbinden:
+- Rules are stored in `~/.config/hyprrules/rules.toml` (the source of truth).
+- On save, `~/.config/hypr/hyprrules.lua` is generated and Hyprland is asked to reload.
+- Your own config is **never** modified. Include the generated module once in `hyprland.lua`:
 
   ```lua
   require("hyprrules")
@@ -27,20 +27,20 @@ hl.window_rule({
 
 ## Backends
 
-| Umgebung | Backend |
+| Environment | Backend |
 |---|---|
-| Linux in einer Hyprland-Session (`HYPRLAND_INSTANCE_SIGNATURE` gesetzt) | echte IPC über `$XDG_RUNTIME_DIR/hypr/<sig>/.socket.sock` |
-| alles andere (z. B. Windows) | Fake-Hyprland mit zwei Monitoren und Beispiel-Apps |
-| `HYPRRULES_BACKEND=fake` | erzwingt Fake, auch unter Hyprland |
+| Linux inside a Hyprland session (`HYPRLAND_INSTANCE_SIGNATURE` set) | real IPC via `$XDG_RUNTIME_DIR/hypr/<sig>/.socket.sock` |
+| anything else (e.g. Windows) | fake Hyprland with two monitors and sample apps |
+| `HYPRRULES_BACKEND=fake` | forces the fake backend, even inside Hyprland |
 
-Das Fake-Backend schreibt nur in eine Sandbox (`<config_dir>/hyprrules/fake/`).
+The fake backend only writes into a sandbox (`<config_dir>/hyprrules/fake/`).
 
-## Projektstruktur
+## Project layout
 
-- `crates/hyprrules-core`: Modell, Lua-Generator, Speicherung, Backends (ohne GTK, testbar mit `cargo test -p hyprrules-core`)
-- `crates/hyprrules-gtk`: Oberfläche (relm4 + libadwaita)
+- `crates/hyprrules-core`: model, Lua generator, storage, backends (no GTK; test with `cargo test -p hyprrules-core`)
+- `crates/hyprrules-gtk`: the UI (relm4 + libadwaita)
 
-## Bauen
+## Building
 
 ### Linux (Arch)
 
@@ -49,8 +49,8 @@ sudo pacman -S gtk4 libadwaita
 cargo run -p hyprrules-gtk
 ```
 
-### Windows (nur zum Entwickeln, Fake-Backend)
+### Windows (development only, fake backend)
 
-1. Fertiges GTK4-Bundle von [gvsbuild](https://github.com/wingtk/gvsbuild/releases) (`GTK4_Gvsbuild_*_x64.zip`) nach `C:\gtk` entpacken.
-2. Umgebungsvariablen setzen: `PKG_CONFIG_PATH=C:\gtk\lib\pkgconfig`, `LIB=C:\gtk\lib`, `C:\gtk\bin` zum `PATH` hinzufügen.
+1. Extract the prebuilt GTK4 bundle from [gvsbuild](https://github.com/wingtk/gvsbuild/releases) (`GTK4_Gvsbuild_*_x64.zip`) to `C:\gtk`.
+2. Set environment variables: `PKG_CONFIG_PATH=C:\gtk\lib\pkgconfig`, `LIB=C:\gtk\lib`, and add `C:\gtk\bin` to `PATH`.
 3. `cargo run -p hyprrules-gtk`
