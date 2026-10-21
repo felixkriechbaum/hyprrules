@@ -2,7 +2,7 @@
 
 use std::fmt::Write;
 
-use crate::model::RuleSet;
+use crate::model::{RuleSet, WindowRule};
 
 /// Module name the user `require`s from `hyprland.lua`.
 pub const MODULE_NAME: &str = "hyprrules";
@@ -28,25 +28,52 @@ pub fn render(rules: &RuleSet) -> String {
         out.push_str(" })\n");
     }
 
-    let enabled: Vec<_> = rules.window_rules.iter().filter(|r| r.enabled).collect();
-    if !enabled.is_empty() {
-        out.push_str("\n-- Apps -> workspaces\n");
+    let active: Vec<_> = rules
+        .window_rules
+        .iter()
+        .filter(|r| r.enabled && r.has_effects())
+        .collect();
+    if !active.is_empty() {
+        out.push_str("\n-- Apps (later rules win)\n");
     }
-    for rule in enabled {
-        let workspace = if rule.silent {
-            format!("{} silent", rule.workspace)
-        } else {
-            rule.workspace.clone()
-        };
-        let _ = write!(
-            out,
-            "hl.window_rule({{\n    name      = {},\n    match     = {{ class = {} }},\n    workspace = {},\n}})\n",
-            quote(&format!("hyprrules-{}", rule.name)),
-            quote(&rule.class),
-            quote(&workspace),
-        );
+    for rule in active {
+        render_window_rule(&mut out, rule);
     }
     out
+}
+
+fn render_window_rule(out: &mut String, rule: &WindowRule) {
+    let mut fields = vec![
+        ("name", quote(&format!("hyprrules-{}", rule.name))),
+        ("match", format!("{{ class = {} }}", quote(&rule.class))),
+    ];
+    if let Some(workspace) = &rule.workspace {
+        let value = if rule.silent {
+            format!("{workspace} silent")
+        } else {
+            workspace.clone()
+        };
+        fields.push(("workspace", quote(&value)));
+    }
+    if rule.is_floating() {
+        fields.push(("float", "true".into()));
+    }
+    if let Some([width, height]) = rule.size {
+        fields.push(("size", quote(&format!("{width} {height}"))));
+    }
+    if let Some(opacity) = rule.opacity {
+        fields.push(("opacity", quote(&opacity.to_string())));
+    }
+    if rule.pin {
+        fields.push(("pin", "true".into()));
+    }
+
+    let width = fields.iter().map(|(key, _)| key.len()).max().unwrap_or(0);
+    out.push_str("hl.window_rule({\n");
+    for (key, value) in fields {
+        let _ = writeln!(out, "    {key:<width$} = {value},");
+    }
+    out.push_str("})\n");
 }
 
 /// Lua string literal with all special characters escaped.
@@ -73,7 +100,7 @@ fn quote(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::WindowRule;
+    use crate::model::RuleEdit;
 
     #[test]
     fn renders_discord_on_workspace_two_on_monitor() {
@@ -85,6 +112,34 @@ mod tests {
         assert!(lua.contains(r#"hl.workspace_rule({ workspace = "2", monitor = "DP-2" })"#));
         assert!(lua.contains(r#"match     = { class = "^(discord)$" },"#));
         assert!(lua.contains(r#"workspace = "2 silent","#));
+        assert!(!lua.contains("float"));
+    }
+
+    #[test]
+    fn renders_all_effects() {
+        let mut rule = WindowRule::for_class("mpv", "3");
+        rule.apply(RuleEdit::Silent(false));
+        rule.apply(RuleEdit::Size(Some([1280, 720])));
+        rule.apply(RuleEdit::Opacity(Some(0.9)));
+        rule.apply(RuleEdit::Pin(true));
+        let mut rules = RuleSet::default();
+        rules.add_window_rule(rule);
+
+        let lua = render(&rules);
+        assert!(lua.contains(r#"    workspace = "3","#));
+        assert!(lua.contains("    float     = true,"));
+        assert!(lua.contains(r#"    size      = "1280 720","#));
+        assert!(lua.contains(r#"    opacity   = "0.9","#));
+        assert!(lua.contains("    pin       = true,"));
+    }
+
+    #[test]
+    fn rules_without_effects_are_skipped() {
+        let mut rule = WindowRule::for_class("kitty", "1");
+        rule.apply(RuleEdit::Workspace(None));
+        let mut rules = RuleSet::default();
+        rules.add_window_rule(rule);
+        assert!(!render(&rules).contains("kitty"));
     }
 
     #[test]

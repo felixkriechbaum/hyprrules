@@ -1,9 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod rule_row;
 mod ui;
 
 use hyprrules_core::backend::{self, HyprBackend};
-use hyprrules_core::{Client, Monitor, Paths, RuleSet, WindowRule};
+use hyprrules_core::{Client, Monitor, Paths, RuleEdit, RuleSet, WindowRule};
 use relm4::adw::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmApp, SimpleComponent, adw};
 
@@ -32,6 +33,7 @@ pub enum Msg {
     ClientPicked(u32),
     AddWindowRule,
     ToggleWindowRule(usize, bool),
+    EditWindowRule(usize, RuleEdit),
     RemoveWindowRule(usize),
     /// Drag & drop: move rule `from` to position `to`.
     MoveWindowRule(usize, usize),
@@ -113,6 +115,14 @@ impl SimpleComponent for App {
                 if let Some(rule) = self.rules.window_rules.get_mut(index) {
                     rule.enabled = enabled;
                     self.dirty = true;
+                    self.sync_state();
+                }
+            }
+            Msg::EditWindowRule(index, edit) => {
+                if let Some(rule) = self.rules.window_rules.get_mut(index) {
+                    rule.apply(edit);
+                    self.dirty = true;
+                    self.ui.update_summary(index, &self.rules);
                     self.sync_state();
                 }
             }

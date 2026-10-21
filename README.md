@@ -15,6 +15,13 @@ hl.window_rule({
 })
 ```
 
+## Features
+
+- **App rules** per window class: workspace (optionally silent), floating, fixed size, opacity, pin.
+  Pick the class from running windows instead of writing regex by hand.
+- **Workspace → monitor** bindings, using the monitors Hyprland actually reports.
+- **Drag & drop ordering**: later rules take precedence, just like in Hyprland.
+
 ## How it works
 
 - Rules are stored in `~/.config/hyprrules/rules.toml` (the source of truth).

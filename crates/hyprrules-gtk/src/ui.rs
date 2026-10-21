@@ -1,14 +1,14 @@
 //! Widget construction. The [`App`] owns a [`Ui`] and reads form values
 //! from it directly; rule lists are rebuilt whenever the rules change.
 
-use hyprrules_core::{Client, Monitor, RuleSet, WindowRule};
+use hyprrules_core::{Client, Monitor, RuleSet};
 use relm4::adw::prelude::*;
 use relm4::gtk::gdk;
 use relm4::{ComponentSender, adw, gtk};
 
-use crate::{App, Msg};
+use crate::{App, Msg, rule_row};
 
-const MAX_WORKSPACE: f64 = 10.0;
+pub const MAX_WORKSPACE: f64 = 10.0;
 
 pub struct Ui {
     pub toasts: adw::ToastOverlay,
@@ -67,7 +67,7 @@ impl Ui {
             .build();
         let new_app = group(
             "Neue App-Regel",
-            "",
+            "Weitere Eigenschaften (schwebend, Größe, Transparenz …) nach dem Hinzufügen per Aufklappen",
             &[client_combo.upcast_ref(), class_entry.upcast_ref(), app_workspace.upcast_ref(), silent.upcast_ref()],
         );
         new_app.set_header_suffix(Some(&add_button(sender, Msg::AddWindowRule)));
@@ -123,18 +123,8 @@ impl Ui {
     pub fn set_rules(&self, rules: &RuleSet, monitors: &[Monitor], sender: &ComponentSender<App>) {
         self.window_rules.remove_all();
         for (i, rule) in rules.window_rules.iter().enumerate() {
-            let row = action_row(&rule.name, &describe_window_rule(rule, rules));
+            let row = rule_row::window_rule_row(i, rule, rules, sender);
             make_reorderable(&row, i, sender);
-
-            let enabled = gtk::Switch::builder()
-                .active(rule.enabled)
-                .valign(gtk::Align::Center)
-                .tooltip_text("Regel aktiv")
-                .build();
-            let s = sender.clone();
-            enabled.connect_active_notify(move |sw| s.input(Msg::ToggleWindowRule(i, sw.is_active())));
-            row.add_suffix(&enabled);
-            row.add_suffix(&delete_button(sender, Msg::RemoveWindowRule(i)));
             self.window_rules.append(&row);
         }
 
@@ -150,11 +140,22 @@ impl Ui {
             self.workspace_rules.append(&row);
         }
     }
+
+    /// Refreshes the collapsed summary of one rule without rebuilding the list.
+    pub fn update_summary(&self, index: usize, rules: &RuleSet) {
+        let row = self
+            .window_rules
+            .row_at_index(index as i32)
+            .and_then(|row| row.downcast::<adw::ExpanderRow>().ok());
+        if let (Some(row), Some(rule)) = (row, rules.window_rules.get(index)) {
+            row.set_subtitle(&rule_row::summary(rule, rules));
+        }
+    }
 }
 
 /// Adds a drag handle to `row` and lets other rows be dropped onto it.
 /// The dragged payload is the rule index.
-fn make_reorderable(row: &adw::ActionRow, index: usize, sender: &ComponentSender<App>) {
+fn make_reorderable(row: &adw::ExpanderRow, index: usize, sender: &ComponentSender<App>) {
     let handle = gtk::Image::builder()
         .icon_name("list-drag-handle-symbolic")
         .tooltip_text("Ziehen zum Umsortieren – spätere Regeln haben Vorrang")
@@ -183,18 +184,6 @@ fn make_reorderable(row: &adw::ActionRow, index: usize, sender: &ComponentSender
         Err(_) => false,
     });
     row.add_controller(target);
-}
-
-fn describe_window_rule(rule: &WindowRule, rules: &RuleSet) -> String {
-    let mut text = format!("Workspace {}", rule.workspace);
-    if let Some(ws) = rules.workspace_rules.iter().find(|w| w.workspace == rule.workspace) {
-        text.push_str(&format!(" auf {}", ws.monitor));
-    }
-    if rule.silent {
-        text.push_str(" · im Hintergrund");
-    }
-    text.push_str(&format!(" · Klasse {}", rule.class));
-    text
 }
 
 fn monitor_label(m: &Monitor) -> String {
@@ -254,7 +243,7 @@ fn add_button(sender: &ComponentSender<App>, msg: Msg) -> gtk::Button {
     button
 }
 
-fn delete_button(sender: &ComponentSender<App>, msg: Msg) -> gtk::Button {
+pub fn delete_button(sender: &ComponentSender<App>, msg: Msg) -> gtk::Button {
     let button = gtk::Button::builder()
         .icon_name("user-trash-symbolic")
         .tooltip_text("Entfernen")

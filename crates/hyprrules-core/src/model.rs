@@ -9,19 +9,42 @@ pub struct RuleSet {
     pub workspace_rules: Vec<WorkspaceRule>,
 }
 
-/// "Windows matching `class` open on `workspace`."
+/// "Windows matching `class` get these effects." Every effect is optional.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WindowRule {
     /// Unique, human readable name; also used as the Hyprland rule name.
     pub name: String,
     /// Regex matched against the window class.
     pub class: String,
-    pub workspace: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
     /// Open in the background without switching to the workspace.
     #[serde(default)]
     pub silent: bool,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
+    #[serde(default)]
+    pub float: bool,
+    /// Initial size in pixels `[width, height]`; implies floating.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<[u32; 2]>,
+    /// 0.0 (invisible) to 1.0 (opaque).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f32>,
+    /// Show on all workspaces; implies floating.
+    #[serde(default)]
+    pub pin: bool,
+}
+
+/// A single change to a window rule's effects, as made in the UI.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RuleEdit {
+    Workspace(Option<String>),
+    Silent(bool),
+    Float(bool),
+    Size(Option<[u32; 2]>),
+    Opacity(Option<f32>),
+    Pin(bool),
 }
 
 /// "Workspace `workspace` lives on monitor `monitor`."
@@ -43,9 +66,37 @@ impl WindowRule {
         Self {
             name: slug(class),
             class: exact_regex(class),
-            workspace: workspace.into(),
-            silent: true,
             enabled: true,
+            workspace: Some(workspace.into()),
+            silent: true,
+            float: false,
+            size: None,
+            opacity: None,
+            pin: false,
+        }
+    }
+
+    /// Hyprland only sizes and pins floating windows, so those imply float.
+    pub fn is_floating(&self) -> bool {
+        self.float || self.pin || self.size.is_some()
+    }
+
+    /// Whether the rule would change anything at all.
+    pub fn has_effects(&self) -> bool {
+        self.workspace.is_some() || self.is_floating() || self.opacity.is_some()
+    }
+
+    pub fn apply(&mut self, edit: RuleEdit) {
+        match edit {
+            RuleEdit::Workspace(ws) => self.workspace = ws,
+            RuleEdit::Silent(silent) => self.silent = silent,
+            RuleEdit::Float(float) => self.float = float,
+            RuleEdit::Size(size) => self.size = size,
+            // Two decimals are plenty and keep the generated Lua readable.
+            RuleEdit::Opacity(opacity) => {
+                self.opacity = opacity.map(|o| (o.clamp(0.0, 1.0) * 100.0).round() / 100.0)
+            }
+            RuleEdit::Pin(pin) => self.pin = pin,
         }
     }
 }
@@ -152,6 +203,42 @@ mod tests {
         assert_eq!(names(&set), ["a", "c", "b"]);
         set.move_window_rule(99, 0);
         assert_eq!(names(&set), ["a", "c", "b"]);
+    }
+
+    #[test]
+    fn size_and_pin_imply_floating() {
+        let mut rule = WindowRule::for_class("mpv", "1");
+        assert!(!rule.is_floating());
+        rule.apply(RuleEdit::Size(Some([800, 600])));
+        assert!(rule.is_floating());
+        rule.apply(RuleEdit::Size(None));
+        rule.apply(RuleEdit::Pin(true));
+        assert!(rule.is_floating());
+    }
+
+    #[test]
+    fn opacity_is_clamped_and_rounded() {
+        let mut rule = WindowRule::for_class("kitty", "1");
+        rule.apply(RuleEdit::Opacity(Some(0.854_999)));
+        assert_eq!(rule.opacity, Some(0.85));
+        rule.apply(RuleEdit::Opacity(Some(3.0)));
+        assert_eq!(rule.opacity, Some(1.0));
+    }
+
+    #[test]
+    fn old_rules_files_still_load() {
+        let old = r#"
+            [[window_rules]]
+            name = "discord"
+            class = "^(discord)$"
+            workspace = "2"
+            silent = true
+            enabled = true
+        "#;
+        let set: RuleSet = toml::from_str(old).unwrap();
+        let rule = &set.window_rules[0];
+        assert_eq!(rule.workspace.as_deref(), Some("2"));
+        assert!(!rule.float && rule.size.is_none() && rule.opacity.is_none());
     }
 
     #[test]

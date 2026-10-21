@@ -7,5 +7,5 @@ pub mod model;
 pub mod store;
 
 pub use backend::{Client, HyprBackend, Monitor};
-pub use model::{RuleSet, WindowRule, WorkspaceRule};
+pub use model::{RuleEdit, RuleSet, WindowRule, WorkspaceRule};
 pub use store::Paths;
