@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::backend::Client;
+
 /// Everything hyprrules manages. Persisted as TOML, rendered to Lua.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RuleSet {
@@ -128,6 +130,29 @@ impl RuleSet {
     pub fn rule_for_class(&self, class: &str) -> Option<usize> {
         let regex = exact_regex(class);
         self.window_rules.iter().position(|r| r.class == regex)
+    }
+
+    /// Workspace the rules send this window class to. Later rules win, as
+    /// in Hyprland; only exact class rules are considered.
+    pub fn target_workspace(&self, class: &str) -> Option<&str> {
+        let regex = exact_regex(class);
+        self.window_rules
+            .iter()
+            .rev()
+            .filter(|r| r.enabled && r.class == regex)
+            .find_map(|r| r.workspace.as_deref())
+    }
+
+    /// Open windows that are not where their rule wants them, as
+    /// `(window address, target workspace)`.
+    pub fn moves(&self, windows: &[Client]) -> Vec<(String, String)> {
+        windows
+            .iter()
+            .filter_map(|w| {
+                let target = self.target_workspace(&w.class)?;
+                (w.workspace().as_deref() != Some(target)).then(|| (w.address.clone(), target.to_owned()))
+            })
+            .collect()
     }
 
     /// Puts an app on a workspace: updates its rule or creates one.
@@ -301,6 +326,25 @@ mod tests {
         set.place_app("kitty", "1");
         assert!(set.unplace_rule(1));
         assert_eq!(set.window_rules.len(), 1);
+    }
+
+    #[test]
+    fn moves_follow_the_last_enabled_rule() {
+        use crate::backend::WorkspaceRef;
+        let window = |address: &str, class: &str, id: i64| Client {
+            class: class.into(),
+            title: String::new(),
+            address: address.into(),
+            workspace: Some(WorkspaceRef { id, name: id.to_string() }),
+        };
+        let mut set = RuleSet::default();
+        set.add_window_rule(WindowRule::for_class("discord", "2"));
+        set.add_window_rule(WindowRule::for_class("discord", "4"));
+        set.add_window_rule(WindowRule::for_class("kitty", "1"));
+        set.window_rules[1].enabled = false;
+
+        let windows = [window("0x1", "discord", 3), window("0x2", "kitty", 1), window("0x3", "firefox", 5)];
+        assert_eq!(set.moves(&windows), [("0x1".to_owned(), "2".to_owned())]);
     }
 
     #[test]

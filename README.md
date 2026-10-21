@@ -23,6 +23,12 @@ hl.window_rule({
 - **Workspace detection**: numbered and named workspaces (e.g. `name:G`) are read from Hyprland
   (existing workspaces plus those defined in the config); anything else can be typed in.
 - **Drag & drop ordering**: later rules take precedence, just like in Hyprland.
+- **Live desk**: monitors to scale (rotation and scaling included), the workspace each monitor shows,
+  and which apps are open where. Apps open somewhere else than their rule says are marked, and
+  **Apply to Open Windows** moves them there right away.
+- **Monitors tab**: every connected monitor with mode, scale, position and rotation, plus your
+  `monitors.lua` for reference (read only).
+- **Keybindings tab**: all binds Hyprland knows, grouped by submap and searchable (read only).
 
 ## How it works
 
@@ -48,6 +54,17 @@ The fake backend only writes into a sandbox (`<config_dir>/hyprrules/fake/`).
 
 - `crates/hyprrules-core`: model, Lua generator, storage, backends (no GTK; test with `cargo test -p hyprrules-core`)
 - `crates/hyprrules-gtk`: the UI (relm4 + libadwaita)
+
+## Installing the icon and desktop entry
+
+```sh
+install -Dm644 crates/hyprrules-gtk/data/icons/hicolor/scalable/apps/dev.felixkriechbaum.hyprrules.svg \
+  ~/.local/share/icons/hicolor/scalable/apps/dev.felixkriechbaum.hyprrules.svg
+install -Dm644 crates/hyprrules-gtk/data/dev.felixkriechbaum.hyprrules.desktop \
+  ~/.local/share/applications/dev.felixkriechbaum.hyprrules.desktop
+```
+
+`cargo run` finds the icon without installing it.
 
 ## Building
 

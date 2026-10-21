@@ -2,6 +2,7 @@
 //! as tiles on their screens and apps as stickers. Everything is placed by
 //! drag and drop; the rule list stays available as a second view.
 
+use hyprrules_core::model::exact_regex;
 use hyprrules_core::{Client, Monitor, RuleSet, workspace};
 use relm4::adw::prelude::*;
 use relm4::gtk::gdk;
@@ -12,8 +13,10 @@ use crate::{App, Msg};
 /// Space the monitors are scaled into.
 const DESK_WIDTH: f64 = 760.0;
 const DESK_HEIGHT: f64 = 300.0;
-/// Bezel padding plus the gap between neighbouring monitors.
-const BEZEL: i32 = 16;
+/// Room between monitors next to each other, and below a monitor for its
+/// stand and name, so neighbours never cover each other.
+const GAP_X: f64 = 24.0;
+const GAP_Y: f64 = 44.0;
 const STICKER_COLORS: u32 = 6;
 
 /// What is being dragged around the desk.
@@ -57,7 +60,8 @@ pub struct DeskState<'a> {
     pub rules: &'a RuleSet,
     pub monitors: &'a [Monitor],
     pub workspaces: &'a [String],
-    pub clients: &'a [Client],
+    /// Every open window, for the live view.
+    pub windows: &'a [Client],
     pub selected: Option<usize>,
 }
 
@@ -68,7 +72,7 @@ impl Desk {
         let shelf = flow_box();
         shelf.set_hexpand(true);
         let shelf_box = gtk::Box::builder().spacing(12).css_classes(["shelf"]).build();
-        shelf_box.append(&caption("Ohne festen Monitor"));
+        shelf_box.append(&caption("No fixed monitor"));
         shelf_box.append(&shelf);
         let s = sender.clone();
         drop_target(&shelf_box, move |payload| match payload {
@@ -86,6 +90,7 @@ impl Desk {
             .build();
         desk.append(&canvas);
         desk.append(&shelf_box);
+        desk.append(&legend());
 
         let tray = flow_box();
         let tray_box = gtk::Box::builder()
@@ -98,9 +103,9 @@ impl Desk {
             .orientation(gtk::Orientation::Vertical)
             .hexpand(true)
             .build();
-        let title = gtk::Label::builder().label("Nicht platziert").xalign(0.0).css_classes(["heading"]).build();
+        let title = gtk::Label::builder().label("Not placed").xalign(0.0).css_classes(["heading"]).build();
         let hint = gtk::Label::builder()
-            .label("Zieh eine App auf einen Workspace. Zurück hierher ziehen entfernt die Zuordnung.")
+            .label("Drag an app onto a workspace to pin it there. Drag it back here to remove the assignment.")
             .xalign(0.0)
             .wrap(true)
             .css_classes(["dim-label", "caption"])
@@ -162,18 +167,35 @@ impl Desk {
         };
 
         // Monitors, scaled into the desk area in their real arrangement.
-        let logical = |m: &Monitor| {
-            let scale = if m.scale > 0.0 { m.scale } else { 1.0 };
-            (m.width as f64 / scale, m.height as f64 / scale)
+        // Every monitor entirely left of (above) another one pushes it right
+        // (down) by a gap, so frames, stands and names never overlap.
+        let rects: Vec<(f64, f64, f64, f64)> = state
+            .monitors
+            .iter()
+            .map(|m| {
+                let (w, h) = m.logical_size();
+                (m.x as f64, m.y as f64, w, h)
+            })
+            .collect();
+        let before = |i: usize| {
+            let (x, y, _, _) = rects[i];
+            let left = rects.iter().filter(|r| r.0 + r.2 <= x + 0.5).count() as f64;
+            let above = rects.iter().filter(|r| r.1 + r.3 <= y + 0.5).count() as f64;
+            (left, above)
         };
-        let min_x = state.monitors.iter().map(|m| m.x).min().unwrap_or(0) as f64;
-        let min_y = state.monitors.iter().map(|m| m.y).min().unwrap_or(0) as f64;
-        let max_x = state.monitors.iter().map(|m| m.x as f64 + logical(m).0).fold(0.0, f64::max);
-        let max_y = state.monitors.iter().map(|m| m.y as f64 + logical(m).1).fold(0.0, f64::max);
-        let scale = (DESK_WIDTH / (max_x - min_x).max(1.0)).min(DESK_HEIGHT / (max_y - min_y).max(1.0));
+        let min_x = rects.iter().map(|r| r.0).fold(f64::INFINITY, f64::min);
+        let min_y = rects.iter().map(|r| r.1).fold(f64::INFINITY, f64::min);
+        let max_x = rects.iter().map(|r| r.0 + r.2).fold(f64::NEG_INFINITY, f64::max);
+        let max_y = rects.iter().map(|r| r.1 + r.3).fold(f64::NEG_INFINITY, f64::max);
+        let (cols, rows) = (0..rects.len())
+            .map(before)
+            .fold((0.0, 0.0), |(c, r), (left, above)| (f64::max(c, left), f64::max(r, above)));
+        let scale = ((DESK_WIDTH - cols * GAP_X) / (max_x - min_x).max(1.0))
+            .min((DESK_HEIGHT - rows * GAP_Y) / (max_y - min_y).max(1.0));
 
-        for monitor in state.monitors {
-            let (w, h) = logical(monitor);
+        for (i, monitor) in state.monitors.iter().enumerate() {
+            let (x, y, w, h) = rects[i];
+            let (left, above) = before(i);
             let tiles: Vec<gtk::Widget> = state
                 .workspaces
                 .iter()
@@ -183,8 +205,8 @@ impl Desk {
             let widget = monitor_widget(monitor, (w * scale) as i32, (h * scale) as i32, &tiles, sender);
             self.canvas.put(
                 &widget,
-                (monitor.x as f64 - min_x) * scale,
-                (monitor.y as f64 - min_y) * scale,
+                (x - min_x) * scale + left * GAP_X,
+                (y - min_y) * scale + above * GAP_Y,
             );
         }
 
@@ -192,18 +214,27 @@ impl Desk {
             self.shelf.append(&workspace_tile(ws, None, state, sender));
         }
 
-        // Rules without a workspace, then running apps without any rule.
+        // Rules without a workspace, then running apps without any rule
+        // that are not already shown as ghosts on a workspace tile.
         for (index, rule) in state.rules.window_rules.iter().enumerate() {
             if rule.workspace.is_none() {
                 self.tray.append(&rule_sticker(index, state, sender));
             }
         }
-        for client in state.clients {
-            if state.rules.rule_for_class(&client.class).is_none() {
-                let sticker = sticker(&client.class, Payload::App(client.class.clone()));
-                sticker.set_tooltip_text(Some(&client.title));
-                self.tray.append(&sticker);
+        let mut listed: Vec<&str> = Vec::new();
+        for window in state.windows {
+            let class = window.class.as_str();
+            let on_tile = state
+                .windows
+                .iter()
+                .any(|w| w.class == class && w.workspace().is_some_and(|ws| state.workspaces.contains(&ws)));
+            if on_tile || listed.contains(&class) || state.rules.rule_for_class(class).is_some() {
+                continue;
             }
+            listed.push(class);
+            let sticker = sticker(class, Payload::App(class.to_owned()));
+            sticker.set_tooltip_text(Some(&window.title));
+            self.tray.append(&sticker);
         }
     }
 }
@@ -217,18 +248,21 @@ fn monitor_widget(
 ) -> gtk::Box {
     let screen = flow_box();
     screen.add_css_class("screen");
-    screen.set_size_request((width - BEZEL).max(120), (height - BEZEL).max(80));
     screen.set_valign(gtk::Align::Fill);
+    screen.set_hexpand(true);
     for tile in tiles {
         screen.append(tile);
     }
 
-    let bezel = gtk::Box::builder().css_classes(["bezel"]).build();
+    let bezel = gtk::Box::builder().css_classes(["bezel"]).hexpand(true).build();
     bezel.append(&screen);
+    // The frame takes the monitor's scaled size; bezel and screen fill it.
     // The focused monitor gets Hyprland's active border gradient.
     let frame = gtk::Box::builder().css_classes(["frame"]).build();
+    frame.set_size_request(width.max(140), height.max(90));
     if monitor.focused {
         frame.add_css_class("focused");
+        frame.set_tooltip_text(Some("Has keyboard focus in Hyprland"));
     }
     frame.append(&bezel);
 
@@ -281,15 +315,34 @@ fn workspace_tile(
             count += 1;
         }
     }
+    // Ghosts: apps open here right now that have no rule yet.
+    let mut ghosts: Vec<&str> = Vec::new();
+    for window in state.windows {
+        let class = window.class.as_str();
+        if window.workspace().as_deref() == Some(selector)
+            && !ghosts.contains(&class)
+            && state.rules.rule_for_class(class).is_none()
+        {
+            ghosts.push(class);
+            let ghost = sticker(class, Payload::App(class.to_owned()));
+            ghost.add_css_class("ghost");
+            ghost.set_tooltip_text(Some("Open here, but without a rule. Drag it onto a workspace to pin it there."));
+            apps.append(&ghost);
+        }
+    }
 
     let tile = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(4)
         .css_classes(["ws"])
-        .tooltip_text("Auf einen anderen Monitor ziehen, um den Workspace dort festzulegen")
+        .tooltip_text("Drag onto another monitor to pin the workspace there")
         .build();
     if count > 0 {
         tile.add_css_class("filled");
+    }
+    if state.monitors.iter().any(|m| m.shown_workspace().as_deref() == Some(selector)) {
+        tile.add_css_class("shown");
+        tile.set_tooltip_text(Some("Visible on its monitor right now. Drag onto another monitor to pin it there."));
     }
     tile.append(&label);
     tile.append(&apps);
@@ -324,7 +377,33 @@ fn rule_sticker(index: usize, state: &DeskState, sender: &ComponentSender<App>) 
     if state.selected == Some(index) {
         sticker.add_css_class("selected");
     }
-    sticker.set_tooltip_text(Some(&crate::rule_row::summary(rule, state.rules)));
+    let mut tooltip = crate::rule_row::summary(rule, state.rules);
+    // Live state: are its windows open, and where?
+    let open: Vec<Option<String>> = state
+        .windows
+        .iter()
+        .filter(|w| exact_regex(&w.class) == rule.class)
+        .map(Client::workspace)
+        .collect();
+    if let (Some(target), true) = (&rule.workspace, rule.enabled && !open.is_empty()) {
+        let elsewhere: Vec<String> = open
+            .iter()
+            .flatten()
+            .filter(|ws| *ws != target)
+            .map(|ws| workspace::label(ws).to_owned())
+            .collect();
+        if elsewhere.is_empty() {
+            sticker.add_css_class("running");
+            tooltip.push_str("\nOpen here right now");
+        } else {
+            sticker.add_css_class("astray");
+            tooltip.push_str(&format!(
+                "\nOpen on workspace {} right now. “Apply to Open Windows” moves it here.",
+                elsewhere.join(", ")
+            ));
+        }
+    }
+    sticker.set_tooltip_text(Some(&tooltip));
 
     let click = gtk::GestureClick::new();
     let s = sender.clone();
@@ -346,10 +425,10 @@ fn sticker(text: &str, payload: Payload) -> gtk::Label {
 
 fn add_app_button(sender: &ComponentSender<App>) -> gtk::MenuButton {
     let entry = gtk::Entry::builder()
-        .placeholder_text("Fensterklasse, z. B. steam")
+        .placeholder_text("Window class, e.g. steam")
         .build();
     let add = gtk::Button::builder()
-        .label("Hinzufügen")
+        .label("Add")
         .css_classes(["suggested-action"])
         .build();
     let form = gtk::Box::builder()
@@ -379,10 +458,26 @@ fn add_app_button(sender: &ComponentSender<App>) -> gtk::MenuButton {
     entry.connect_activate(move |_| submit());
 
     gtk::MenuButton::builder()
-        .label("Andere App")
+        .label("Other App")
         .valign(gtk::Align::Center)
         .popover(&popover)
         .build()
+}
+
+/// Explains the sticker styles at the bottom of the desk.
+fn legend() -> gtk::Box {
+    let legend = gtk::Box::builder()
+        .spacing(14)
+        .halign(gtk::Align::End)
+        .css_classes(["legend"])
+        .build();
+    for (class, text) in [("running", "open here"), ("astray", "open elsewhere"), ("ghost", "open, no rule")] {
+        let item = gtk::Box::builder().spacing(6).build();
+        item.append(&gtk::Label::builder().label(" ").css_classes(["sticker", "sample", class]).build());
+        item.append(&gtk::Label::builder().label(text).css_classes(["desk-caption"]).build());
+        legend.append(&item);
+    }
+    legend
 }
 
 fn caption(text: &str) -> gtk::Label {

@@ -6,7 +6,9 @@ use relm4::adw::prelude::*;
 use relm4::gtk::gdk;
 use relm4::{ComponentSender, adw, gtk};
 
+use crate::binds_page::BindsPage;
 use crate::desk::Desk;
+use crate::monitors_page::MonitorsPage;
 use crate::workspace_picker::WorkspacePicker;
 use crate::{App, Msg, rule_row};
 
@@ -16,8 +18,12 @@ pub struct Ui {
     pub toasts: adw::ToastOverlay,
     pub banner: adw::Banner,
     pub save: gtk::Button,
-    stack: adw::ViewStack,
+    pub apply: gtk::Button,
+    /// Desk and rule list inside the Workspaces tab.
+    stack: gtk::Stack,
     pub desk: Desk,
+    pub monitors: MonitorsPage,
+    pub binds: BindsPage,
     split: adw::OverlaySplitView,
     inspector: gtk::Box,
     window_rules: gtk::ListBox,
@@ -33,7 +39,7 @@ pub struct Ui {
 impl Ui {
     pub fn build(window: &adw::ApplicationWindow, backend: &str, sender: &ComponentSender<App>) -> Self {
         let save = gtk::Button::builder()
-            .label("Speichern & neu laden")
+            .label("Save & Reload")
             .css_classes(["suggested-action"])
             .sensitive(false)
             .build();
@@ -41,11 +47,11 @@ impl Ui {
 
         let refresh = gtk::Button::builder()
             .icon_name("view-refresh-symbolic")
-            .tooltip_text("Laufende Apps und Monitore neu einlesen")
+            .tooltip_text("Re-read windows, monitors and bindings from Hyprland")
             .build();
         connect(&refresh, sender, Msg::Refresh);
 
-        let stack = adw::ViewStack::new();
+        let tabs = adw::ViewStack::new();
         let backend_label = gtk::Label::builder()
             .label(backend)
             .css_classes(["dim-label", "caption"])
@@ -53,7 +59,7 @@ impl Ui {
         let header = adw::HeaderBar::new();
         header.set_title_widget(Some(
             &adw::ViewSwitcher::builder()
-                .stack(&stack)
+                .stack(&tabs)
                 .policy(adw::ViewSwitcherPolicy::Wide)
                 .build(),
         ));
@@ -62,51 +68,73 @@ impl Ui {
         header.pack_end(&save);
 
         let banner = adw::Banner::new(
-            "hyprrules.lua wird noch nicht geladen – füge require(\"hyprrules\") in deine hyprland.lua ein",
+            "hyprrules.lua is not loaded yet – add require(\"hyprrules\") to your hyprland.lua",
         );
         banner.set_use_markup(false);
 
         let page = adw::PreferencesPage::new();
 
         // Apps -> workspaces
-        let window_rules = boxed_list("Noch keine App-Regeln");
-        page.add(&group("Apps → Workspaces", "Welche App auf welchem Workspace startet", &[window_rules.upcast_ref()]));
+        let window_rules = boxed_list("No app rules yet");
+        page.add(&group("Apps → Workspaces", "Which app opens on which workspace", &[window_rules.upcast_ref()]));
 
-        let client_combo = adw::ComboRow::builder().title("Laufende App übernehmen").build();
+        let client_combo = adw::ComboRow::builder().title("Pick a running app").build();
         let s = sender.clone();
         client_combo.connect_selected_notify(move |row| s.input(Msg::ClientPicked(row.selected())));
-        let class_entry = adw::EntryRow::builder().title("Fensterklasse").build();
+        let class_entry = adw::EntryRow::builder().title("Window class").build();
         let app_workspace = WorkspacePicker::new("Workspace");
         let silent = adw::SwitchRow::builder()
-            .title("Im Hintergrund öffnen")
-            .subtitle("Nicht automatisch zum Workspace wechseln")
+            .title("Open in background")
+            .subtitle("Don't switch to the workspace")
             .active(true)
             .build();
         let new_app = group(
-            "Neue App-Regel",
-            "Weitere Eigenschaften (schwebend, Größe, Transparenz …) nach dem Hinzufügen per Aufklappen",
+            "New App Rule",
+            "Set more properties (floating, size, opacity …) by expanding the rule after adding it",
             &[client_combo.upcast_ref(), class_entry.upcast_ref(), app_workspace.rows()[0], app_workspace.rows()[1], silent.upcast_ref()],
         );
         new_app.set_header_suffix(Some(&add_button(sender, Msg::AddWindowRule)));
         page.add(&new_app);
 
         // Workspaces -> monitors
-        let workspace_rules = boxed_list("Noch keine Workspace-Zuordnungen");
+        let workspace_rules = boxed_list("No workspace assignments yet");
         page.add(&group(
-            "Workspaces → Monitore",
-            "Auf welchem Bildschirm ein Workspace liegt",
+            "Workspaces → Monitors",
+            "Which screen a workspace lives on",
             &[workspace_rules.upcast_ref()],
         ));
 
         let ws_workspace = WorkspacePicker::new("Workspace");
         let monitor_combo = adw::ComboRow::builder().title("Monitor").build();
-        let new_ws = group("Neue Workspace-Zuordnung", "", &[ws_workspace.rows()[0], ws_workspace.rows()[1], monitor_combo.upcast_ref()]);
+        let new_ws = group("New Workspace Assignment", "", &[ws_workspace.rows()[0], ws_workspace.rows()[1], monitor_combo.upcast_ref()]);
         new_ws.set_header_suffix(Some(&add_button(sender, Msg::AddWorkspaceRule)));
         page.add(&new_ws);
 
         let desk = Desk::build(sender);
-        stack.add_titled_with_icon(&desk.root, Some(DESK_PAGE), "Schreibtisch", "video-display-symbolic");
-        stack.add_titled_with_icon(&page, Some("rules"), "Regeln", "view-list-symbolic");
+        let stack = gtk::Stack::builder()
+            .transition_type(gtk::StackTransitionType::Crossfade)
+            .vexpand(true)
+            .build();
+        stack.add_titled(&desk.root, Some(DESK_PAGE), "Desk");
+        stack.add_titled(&page, Some("rules"), "Rules");
+
+        let apply = gtk::Button::builder()
+            .label("Apply to Open Windows")
+            .tooltip_text("Move open windows to the workspace their rule assigns")
+            .sensitive(false)
+            .build();
+        connect(&apply, sender, Msg::ApplyToWindows);
+        let bar = gtk::CenterBox::builder()
+            .margin_top(8)
+            .margin_bottom(4)
+            .margin_start(12)
+            .margin_end(12)
+            .build();
+        bar.set_center_widget(Some(&gtk::StackSwitcher::builder().stack(&stack).build()));
+        bar.set_end_widget(Some(&apply));
+        let workspaces_page = gtk::Box::builder().orientation(gtk::Orientation::Vertical).build();
+        workspaces_page.append(&bar);
+        workspaces_page.append(&stack);
 
         // Inspector for the app clicked on the desk.
         let inspector = gtk::Box::builder()
@@ -117,14 +145,20 @@ impl Ui {
             .min_sidebar_width(320.0)
             .max_sidebar_width(380.0)
             .show_sidebar(false)
-            .content(&stack)
+            .content(&workspaces_page)
             .sidebar(&inspector)
             .build();
+
+        let monitors = MonitorsPage::build();
+        let binds = BindsPage::build();
+        tabs.add_titled_with_icon(&split, Some("workspaces"), "Workspaces", "view-grid-symbolic");
+        tabs.add_titled_with_icon(&monitors.root, Some("monitors"), "Monitors", "video-display-symbolic");
+        tabs.add_titled_with_icon(&binds.root, Some("binds"), "Keybindings", "input-keyboard-symbolic");
 
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
         toolbar.add_top_bar(&banner);
-        toolbar.set_content(Some(&split));
+        toolbar.set_content(Some(&tabs));
 
         let toasts = adw::ToastOverlay::new();
         toasts.set_child(Some(&toolbar));
@@ -134,8 +168,11 @@ impl Ui {
             toasts,
             banner,
             save,
+            apply,
             stack,
             desk,
+            monitors,
+            binds,
             split,
             inspector,
             window_rules,
@@ -150,7 +187,7 @@ impl Ui {
     }
 
     pub fn set_pickers(&self, clients: &[Client], monitors: &[Monitor]) {
-        let mut apps = vec!["— manuell eingeben —".to_owned()];
+        let mut apps = vec!["— enter manually —".to_owned()];
         apps.extend(clients.iter().map(|c| ellipsize(&format!("{} — {}", c.class, c.title), 48)));
         self.client_combo.set_model(Some(&string_list(&apps)));
 
@@ -180,14 +217,14 @@ impl Ui {
 
         let close = gtk::Button::builder()
             .icon_name("window-close-symbolic")
-            .tooltip_text("Schließen")
+            .tooltip_text("Close")
             .css_classes(["flat", "circular"])
             .build();
         connect(&close, sender, Msg::SelectRule(None));
         let header = adw::HeaderBar::builder()
             .show_end_title_buttons(false)
             .show_start_title_buttons(false)
-            .title_widget(&adw::WindowTitle::new("App-Regel", ""))
+            .title_widget(&adw::WindowTitle::new("App Rule", ""))
             .build();
         header.pack_end(&close);
 
@@ -231,7 +268,7 @@ impl Ui {
                 .iter()
                 .find(|m| m.name == rule.monitor)
                 .map(monitor_label)
-                .unwrap_or_else(|| format!("{} (nicht verbunden)", rule.monitor));
+                .unwrap_or_else(|| format!("{} (not connected)", rule.monitor));
             let row = action_row(&format!("Workspace {}", workspace::label(&rule.workspace)), &monitor);
             row.add_suffix(&delete_button(sender, Msg::RemoveWorkspaceRule(i)));
             self.workspace_rules.append(&row);
@@ -255,7 +292,7 @@ impl Ui {
 fn make_reorderable(row: &adw::ExpanderRow, index: usize, sender: &ComponentSender<App>) {
     let handle = gtk::Image::builder()
         .icon_name("list-drag-handle-symbolic")
-        .tooltip_text("Ziehen zum Umsortieren – spätere Regeln haben Vorrang")
+        .tooltip_text("Drag to reorder – later rules take precedence")
         .css_classes(["dim-label"])
         .build();
     row.add_prefix(&handle);
@@ -302,7 +339,7 @@ fn group(title: &str, description: &str, children: &[&gtk::Widget]) -> adw::Pref
     group
 }
 
-fn boxed_list(placeholder: &str) -> gtk::ListBox {
+pub fn boxed_list(placeholder: &str) -> gtk::ListBox {
     let list = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::None)
         .css_classes(["boxed-list"])
@@ -317,7 +354,7 @@ fn boxed_list(placeholder: &str) -> gtk::ListBox {
     list
 }
 
-fn action_row(title: &str, subtitle: &str) -> adw::ActionRow {
+pub fn action_row(title: &str, subtitle: &str) -> adw::ActionRow {
     adw::ActionRow::builder()
         .title(title)
         .subtitle(subtitle)
@@ -327,7 +364,7 @@ fn action_row(title: &str, subtitle: &str) -> adw::ActionRow {
 
 fn add_button(sender: &ComponentSender<App>, msg: Msg) -> gtk::Button {
     let button = gtk::Button::builder()
-        .label("Hinzufügen")
+        .label("Add")
         .css_classes(["flat"])
         .build();
     connect(&button, sender, msg);
@@ -337,7 +374,7 @@ fn add_button(sender: &ComponentSender<App>, msg: Msg) -> gtk::Button {
 pub fn delete_button(sender: &ComponentSender<App>, msg: Msg) -> gtk::Button {
     let button = gtk::Button::builder()
         .icon_name("user-trash-symbolic")
-        .tooltip_text("Entfernen")
+        .tooltip_text("Remove")
         .valign(gtk::Align::Center)
         .css_classes(["flat"])
         .build();

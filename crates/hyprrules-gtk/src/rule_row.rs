@@ -30,7 +30,7 @@ pub fn window_rule_row(
     let enabled = gtk::Switch::builder()
         .active(rule.enabled)
         .valign(gtk::Align::Center)
-        .tooltip_text("Regel aktiv")
+        .tooltip_text("Rule enabled")
         .build();
     let s = sender.clone();
     enabled.connect_active_notify(move |sw| s.input(Msg::ToggleWindowRule(index, sw.is_active())));
@@ -43,13 +43,13 @@ pub fn window_rule_row(
     };
 
     // Workspace
-    let ws_on = switch_row("Workspace zuweisen", "", rule.workspace.is_some());
+    let ws_on = switch_row("Assign workspace", "", rule.workspace.is_some());
     let ws = WorkspacePicker::new("Workspace");
     ws.set_choices(workspaces);
     if let Some(selector) = &rule.workspace {
         ws.select(selector);
     }
-    let silent = switch_row("Im Hintergrund öffnen", "Nicht automatisch zum Workspace wechseln", rule.silent);
+    let silent = switch_row("Open in background", "Don't switch to the workspace", rule.silent);
     let [ws_combo, ws_entry] = ws.rows();
     enables(&ws_on, &[ws_combo, ws_entry, silent.upcast_ref()]);
     let send_ws = {
@@ -63,15 +63,15 @@ pub fn window_rule_row(
     silent.connect_active_notify(move |sw| e(RuleEdit::Silent(sw.is_active())));
 
     // Float
-    let float = switch_row("Schwebend", "Fenster nicht kacheln", rule.float);
+    let float = switch_row("Floating", "Don't tile the window", rule.float);
     let e = emit.clone();
     float.connect_active_notify(move |sw| e(RuleEdit::Float(sw.is_active())));
 
     // Size
     let [w, h] = rule.size.unwrap_or([1280, 720]);
-    let size_on = switch_row("Feste Größe", "Startgröße in Pixeln, macht das Fenster schwebend", rule.size.is_some());
-    let width = spin_row("Breite", 100.0, MAX_SIZE, 10.0, 0, w as f64);
-    let height = spin_row("Höhe", 100.0, MAX_SIZE, 10.0, 0, h as f64);
+    let size_on = switch_row("Fixed size", "Initial size in pixels, makes the window float", rule.size.is_some());
+    let width = spin_row("Width", 100.0, MAX_SIZE, 10.0, 0, w as f64);
+    let height = spin_row("Height", 100.0, MAX_SIZE, 10.0, 0, h as f64);
     enables(&size_on, &[width.upcast_ref(), height.upcast_ref()]);
     let send_size = {
         let (size_on, width, height, emit) = (size_on.clone(), width.clone(), height.clone(), emit.clone());
@@ -84,8 +84,8 @@ pub fn window_rule_row(
     height.connect_value_notify(move |_| send_size());
 
     // Opacity
-    let opacity_on = switch_row("Transparenz", "", rule.opacity.is_some());
-    let opacity = spin_row("Deckkraft", 0.1, 1.0, 0.05, 2, rule.opacity.unwrap_or(0.9).into());
+    let opacity_on = switch_row("Transparency", "", rule.opacity.is_some());
+    let opacity = spin_row("Opacity", 0.1, 1.0, 0.05, 2, rule.opacity.unwrap_or(0.9).into());
     enables(&opacity_on, &[opacity.upcast_ref()]);
     let send_opacity = {
         let (opacity_on, opacity, emit) = (opacity_on.clone(), opacity.clone(), emit.clone());
@@ -94,7 +94,7 @@ pub fn window_rule_row(
     on_change(&opacity_on, &opacity, send_opacity);
 
     // Pin
-    let pin = switch_row("Anheften", "Auf allen Workspaces sichtbar, macht das Fenster schwebend", rule.pin);
+    let pin = switch_row("Pin", "Visible on all workspaces, makes the window float", rule.pin);
     let e = emit;
     pin.connect_active_notify(move |sw| e(RuleEdit::Pin(sw.is_active())));
 
@@ -125,34 +125,34 @@ pub fn summary(rule: &WindowRule, rules: &RuleSet) -> String {
     if let Some(ws) = &rule.workspace {
         let mut part = format!("Workspace {}", workspace::label(ws));
         if let Some(bound) = rules.workspace_rules.iter().find(|w| &w.workspace == ws) {
-            part.push_str(&format!(" auf {}", bound.monitor));
+            part.push_str(&format!(" on {}", bound.monitor));
         }
         if rule.silent {
-            part.push_str(" (Hintergrund)");
+            part.push_str(" (background)");
         }
         parts.push(part);
     }
     if rule.is_floating() {
-        parts.push("schwebend".into());
+        parts.push("floating".into());
     }
     if let Some([w, h]) = rule.size {
         parts.push(format!("{w}×{h}"));
     }
     if let Some(opacity) = rule.opacity {
-        parts.push(format!("{:.0} % Deckkraft", opacity * 100.0));
+        parts.push(format!("{:.0} % opacity", opacity * 100.0));
     }
     if rule.pin {
-        parts.push("angeheftet".into());
+        parts.push("pinned".into());
     }
     if parts.is_empty() {
-        parts.push("keine Wirkung".into());
+        parts.push("no effect".into());
     }
     parts.join(" · ")
 }
 
 fn class_row(rule: &WindowRule) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
-        .title("Fensterklasse (Regex)")
+        .title("Window class (regex)")
         .subtitle(&rule.class)
         .subtitle_selectable(true)
         .build();

@@ -1,4 +1,4 @@
-//! Dropdown of known workspaces plus "Andere …" with a free-text entry for
+//! Dropdown of known workspaces plus "Other …" with a free-text entry for
 //! workspaces Hyprland doesn't report (yet).
 
 use std::cell::RefCell;
@@ -8,7 +8,7 @@ use hyprrules_core::workspace;
 use relm4::adw::prelude::*;
 use relm4::{adw, gtk};
 
-const OTHER: &str = "Andere …";
+const OTHER: &str = "Other …";
 
 #[derive(Clone)]
 pub struct WorkspacePicker {
@@ -22,7 +22,7 @@ impl WorkspacePicker {
     pub fn new(title: &str) -> Self {
         let combo = adw::ComboRow::builder().title(title).build();
         let entry = adw::EntryRow::builder()
-            .title("Eigener Workspace (Zahl oder Name)")
+            .title("Custom workspace (number or name)")
             .visible(false)
             .build();
         let picker = Self {

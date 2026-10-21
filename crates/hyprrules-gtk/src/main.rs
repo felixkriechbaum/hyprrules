@@ -1,14 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod binds_page;
 mod desk;
+mod monitors_page;
 mod rule_row;
 mod ui;
 mod workspace_picker;
 
 use hyprrules_core::backend::{self, HyprBackend};
-use hyprrules_core::{Client, Monitor, Paths, RuleEdit, RuleSet, WindowRule, workspace};
+use hyprrules_core::{Bind, Client, Monitor, Paths, RuleEdit, RuleSet, WindowRule, workspace};
 use relm4::adw::prelude::*;
-use relm4::{ComponentParts, ComponentSender, RelmApp, SimpleComponent, adw};
+use relm4::gtk::gdk;
+use relm4::{ComponentParts, ComponentSender, RelmApp, SimpleComponent, adw, gtk};
 
 use desk::DeskState;
 use ui::Ui;
@@ -24,8 +27,11 @@ pub struct App {
     paths: Paths,
     rules: RuleSet,
     monitors: Vec<Monitor>,
+    /// Every open window.
+    windows: Vec<Client>,
     /// Running apps, one entry per window class.
     clients: Vec<Client>,
+    binds: Vec<Bind>,
     /// Workspaces Hyprland reports, as selectors.
     workspaces: Vec<String>,
     /// Rule shown in the desk's inspector.
@@ -56,6 +62,8 @@ pub enum Msg {
     /// Workspace dropped on a monitor, or on the shelf (None).
     BindWorkspace(String, Option<String>),
     AddApp(String),
+    /// Move open windows to the workspace their rule assigns.
+    ApplyToWindows,
     Refresh,
     Save,
 }
@@ -68,8 +76,14 @@ impl SimpleComponent for App {
     type Widgets = ();
 
     fn init_root() -> Self::Root {
+        // Lets `cargo run` find the icon without installing it.
+        if let Some(display) = gdk::Display::default() {
+            gtk::IconTheme::for_display(&display).add_search_path(concat!(env!("CARGO_MANIFEST_DIR"), "/data/icons"));
+        }
+        gtk::Window::set_default_icon_name(APP_ID);
         adw::ApplicationWindow::builder()
             .title("hyprrules")
+            .icon_name(APP_ID)
             .default_width(1180)
             .default_height(840)
             .build()
@@ -83,7 +97,7 @@ impl SimpleComponent for App {
 
         let mut errors = Vec::new();
         let rules = paths.load().unwrap_or_else(|e| {
-            errors.push(format!("Regeln konnten nicht geladen werden: {e:#}"));
+            errors.push(format!("Could not load rules: {e:#}"));
             RuleSet::default()
         });
 
@@ -93,7 +107,9 @@ impl SimpleComponent for App {
             paths,
             rules,
             monitors: Vec::new(),
+            windows: Vec::new(),
             clients: Vec::new(),
+            binds: Vec::new(),
             workspaces: Vec::new(),
             selected: None,
             dirty: false,
@@ -110,6 +126,7 @@ impl SimpleComponent for App {
     }
 
     fn update(&mut self, msg: Msg, sender: ComponentSender<Self>) {
+        debug(&format!("{msg:?}"));
         match msg {
             Msg::ClientPicked(index) => {
                 // Entry 0 is "enter manually".
@@ -120,11 +137,11 @@ impl SimpleComponent for App {
             Msg::AddWindowRule => {
                 let class = self.ui.class_entry.text().trim().to_owned();
                 if class.is_empty() {
-                    self.toast("Bitte eine Fensterklasse angeben oder eine laufende App wählen");
+                    self.toast("Enter a window class or pick a running app");
                     return;
                 }
                 let Some(workspace) = self.ui.app_workspace.selected() else {
-                    self.toast("Bitte einen Workspace wählen");
+                    self.toast("Pick a workspace");
                     return;
                 };
                 let mut rule = WindowRule::for_class(&class, workspace);
@@ -201,11 +218,11 @@ impl SimpleComponent for App {
             }
             Msg::AddWorkspaceRule => {
                 let Some(monitor) = self.monitors.get(self.ui.monitor_combo.selected() as usize) else {
-                    self.toast("Kein Monitor ausgewählt");
+                    self.toast("No monitor selected");
                     return;
                 };
                 let Some(workspace) = self.ui.ws_workspace.selected() else {
-                    self.toast("Bitte einen Workspace wählen");
+                    self.toast("Pick a workspace");
                     return;
                 };
                 let monitor = monitor.name.clone();
@@ -217,6 +234,25 @@ impl SimpleComponent for App {
                     self.rules.workspace_rules.remove(index);
                     self.changed(&sender);
                 }
+            }
+            Msg::ApplyToWindows => {
+                let moves = self.rules.moves(&self.windows);
+                let mut moved = 0;
+                for (address, workspace) in &moves {
+                    match self.backend.move_window(address, workspace) {
+                        Ok(()) => moved += 1,
+                        Err(e) => {
+                            self.toast(&format!("Could not move a window: {e:#}"));
+                            break;
+                        }
+                    }
+                }
+                if moved > 0 {
+                    self.toast(&format!("Moved {}", windows(moved)));
+                }
+                self.refresh_from_hyprland();
+                self.rebuild_desk(&sender);
+                self.sync_state();
             }
             Msg::Refresh => {
                 self.refresh_from_hyprland();
@@ -238,7 +274,7 @@ impl App {
 
     fn save(&mut self) {
         if let Err(e) = self.paths.save(&self.rules) {
-            self.toast(&format!("Speichern fehlgeschlagen: {e:#}"));
+            self.toast(&format!("Saving failed: {e:#}"));
             return;
         }
         self.dirty = false;
@@ -247,29 +283,48 @@ impl App {
 
         let file = self.paths.lua_file();
         match self.backend.reload() {
-            Ok(()) => self.toast(&format!("Gespeichert: {}", file.display())),
-            Err(e) => self.toast(&format!("Gespeichert, aber Reload fehlgeschlagen: {e:#}")),
+            Ok(()) => self.toast(&format!("Saved: {}", file.display())),
+            Err(e) => self.toast(&format!("Saved, but reload failed: {e:#}")),
         }
     }
 
     fn refresh_from_hyprland(&mut self) {
         match self.backend.monitors() {
             Ok(monitors) => self.monitors = monitors,
-            Err(e) => self.toast(&format!("Monitore nicht lesbar: {e:#}")),
+            Err(e) => self.toast(&format!("Could not read monitors: {e:#}")),
         }
         match self.backend.clients() {
-            Ok(mut clients) => {
+            Ok(windows) => {
+                let mut clients = windows.clone();
                 clients.sort_by_key(|c| c.class.to_lowercase());
                 clients.dedup_by(|a, b| a.class == b.class);
                 self.clients = clients;
+                self.windows = windows;
             }
-            Err(e) => self.toast(&format!("Laufende Apps nicht lesbar: {e:#}")),
+            Err(e) => self.toast(&format!("Could not read open windows: {e:#}")),
         }
         match self.backend.workspaces() {
             Ok(workspaces) => self.workspaces = workspaces,
-            Err(e) => self.toast(&format!("Workspaces nicht lesbar: {e:#}")),
+            Err(e) => self.toast(&format!("Could not read workspaces: {e:#}")),
         }
+        match self.backend.binds() {
+            Ok(binds) => self.binds = binds,
+            Err(e) => self.toast(&format!("Could not read keybindings: {e:#}")),
+        }
+        debug(&format!(
+            "monitors {:?}, workspaces {:?}, {} windows, {} binds",
+            self.monitors.iter().map(|m| (&m.name, m.x, m.y, m.width, m.height)).collect::<Vec<_>>(),
+            self.workspaces,
+            self.windows.len(),
+            self.binds.len()
+        ));
         self.ui.set_pickers(&self.clients, &self.monitors);
+        self.ui.binds.set(&self.binds);
+        let monitors_file = self
+            .paths
+            .monitors_file()
+            .and_then(|path| std::fs::read_to_string(&path).ok().map(|text| (path, text)));
+        self.ui.monitors.set(&self.monitors, monitors_file, &self.paths.hypr_dir);
     }
 
     /// Workspaces from Hyprland plus those already used in rules, so a
@@ -278,9 +333,6 @@ impl App {
         let mut known = self.workspaces.clone();
         known.extend(self.rules.window_rules.iter().filter_map(|r| r.workspace.clone()));
         known.extend(self.rules.workspace_rules.iter().map(|r| r.workspace.clone()));
-        if known.is_empty() {
-            known = (1..=5).map(|n| n.to_string()).collect();
-        }
         workspace::sorted(known)
     }
 
@@ -299,7 +351,7 @@ impl App {
             rules: &self.rules,
             monitors: &self.monitors,
             workspaces: &workspaces,
-            clients: &self.clients,
+            windows: &self.windows,
             selected: self.selected,
         };
         self.ui.desk.rebuild(&state, sender);
@@ -317,7 +369,7 @@ impl App {
             rules: &self.rules,
             monitors: &self.monitors,
             workspaces: &workspaces,
-            clients: &self.clients,
+            windows: &self.windows,
             selected: self.selected,
         };
         self.ui.desk.rebuild(&state, sender);
@@ -333,6 +385,13 @@ impl App {
     fn sync_state(&self) {
         self.ui.save.set_sensitive(self.dirty);
         self.ui.banner.set_revealed(!self.included);
+        let moves = self.rules.moves(&self.windows).len();
+        self.ui.apply.set_sensitive(moves > 0);
+        self.ui.apply.set_tooltip_text(Some(&if moves == 0 {
+            "Every open window is where its rule wants it".to_owned()
+        } else {
+            format!("Move {} to the workspace their rule assigns", windows(moves))
+        }));
     }
 
     fn toast(&self, text: &str) {
@@ -340,4 +399,15 @@ impl App {
             .toasts
             .add_toast(adw::Toast::builder().title(text).use_markup(false).build());
     }
+}
+
+/// Prints to stderr when `HYPRRULES_DEBUG` is set.
+fn debug(text: &str) {
+    if std::env::var_os("HYPRRULES_DEBUG").is_some() {
+        eprintln!("hyprrules: {text}");
+    }
+}
+
+fn windows(n: usize) -> String {
+    if n == 1 { "1 window".into() } else { format!("{n} windows") }
 }

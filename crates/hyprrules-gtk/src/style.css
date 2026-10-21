@@ -15,7 +15,6 @@
 .frame {
   padding: 2px;
   border-radius: 13px;
-  margin-right: 14px;
 }
 
 .frame.focused {
@@ -67,6 +66,11 @@
   background-color: rgba(255, 255, 255, 0.11);
   border-style: solid;
   border-color: rgba(255, 255, 255, 0.14);
+}
+
+/* The workspace its monitor shows right now. */
+.ws.shown {
+  border: 1px solid rgba(51, 204, 255, 0.75);
 }
 
 .ws:drop(active) {
@@ -131,6 +135,37 @@
   opacity: 0.45;
 }
 
+/* Live state: open where the rule wants it, open elsewhere, open without a rule. */
+.sticker.running {
+  border: 2px solid #00ff99;
+}
+
+.sticker.astray {
+  border: 2px dashed #ff5c7a;
+}
+
+.sticker.ghost {
+  background-color: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  border: 1px dashed rgba(255, 255, 255, 0.45);
+  box-shadow: none;
+}
+
+.sticker.sample {
+  background-color: #c3a6ff;
+  min-width: 14px;
+  padding: 0 4px;
+  font-size: 9px;
+}
+
+.sticker.sample.ghost {
+  background-color: transparent;
+}
+
+.legend {
+  margin-top: -8px;
+}
+
 .sticker.selected {
   box-shadow: 0 0 0 2px white, 0 0 0 4px #33ccff;
 }
@@ -146,6 +181,17 @@
 .tray:drop(active) {
   border-color: @error_color;
   background-color: alpha(@error_color, 0.08);
+}
+
+/* Keybindings */
+.key {
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background-color: alpha(@window_fg_color, 0.08);
+  box-shadow: inset 0 -2px alpha(@window_fg_color, 0.18);
 }
 
 .desk flowboxchild,

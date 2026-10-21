@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=hyprrules
+GenericName=Hyprland Rules
+Comment=Place apps on workspaces and workspaces on monitors
+Exec=hyprrules-gtk
+Icon=dev.felixkriechbaum.hyprrules
+Terminal=false
+Categories=Settings;DesktopSettings;GTK;
+Keywords=hyprland;workspace;window;rules;monitor;keybindings;
+StartupWMClass=dev.felixkriechbaum.hyprrules

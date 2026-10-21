@@ -42,6 +42,15 @@ impl Paths {
         self.hypr_dir.join(format!("{}.lua", lua::MODULE_NAME))
     }
 
+    /// The user's `monitors.lua` anywhere in the Hyprland config directory,
+    /// the least nested one if there are several.
+    pub fn monitors_file(&self) -> Option<PathBuf> {
+        lua_files(&self.hypr_dir)
+            .into_iter()
+            .filter(|p| p.file_name().is_some_and(|n| n == "monitors.lua"))
+            .min_by_key(|p| p.components().count())
+    }
+
     pub fn load(&self) -> Result<RuleSet> {
         if !self.rules_file.exists() {
             return Ok(RuleSet::default());
@@ -127,6 +136,18 @@ mod tests {
         paths.save(&rules).unwrap();
         assert_eq!(paths.load().unwrap(), rules);
         assert!(paths.lua_file().exists());
+    }
+
+    #[test]
+    fn finds_the_least_nested_monitors_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = temp_paths(dir.path());
+        assert_eq!(paths.monitors_file(), None);
+
+        fs::create_dir_all(paths.hypr_dir.join("config").join("old")).unwrap();
+        fs::write(paths.hypr_dir.join("config").join("old").join("monitors.lua"), "").unwrap();
+        fs::write(paths.hypr_dir.join("config").join("monitors.lua"), "").unwrap();
+        assert_eq!(paths.monitors_file(), Some(paths.hypr_dir.join("config").join("monitors.lua")));
     }
 
     #[test]

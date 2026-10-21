@@ -6,6 +6,7 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 use super::{Client, HyprBackend, Monitor};
+use crate::binds::Bind;
 use crate::store::Paths;
 use crate::workspace;
 
@@ -88,6 +89,18 @@ impl HyprBackend for IpcBackend {
             found.extend(rules.iter().filter_map(|r| workspace::from_config(&r.workspace)));
         }
         Ok(workspace::sorted(found))
+    }
+
+    fn binds(&self) -> Result<Vec<Bind>> {
+        self.request_json("binds")
+    }
+
+    fn move_window(&self, address: &str, workspace: &str) -> Result<()> {
+        let answer = self.request(&format!("dispatch movetoworkspacesilent {workspace},address:{address}"))?;
+        if answer.trim() != "ok" {
+            bail!("moving window failed: {answer}");
+        }
+        Ok(())
     }
 
     fn reload(&self) -> Result<()> {

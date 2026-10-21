@@ -2,11 +2,13 @@
 //! access to Hyprland (real IPC on Linux, fake backend everywhere else).
 
 pub mod backend;
+pub mod binds;
 pub mod lua;
 pub mod model;
 pub mod store;
 pub mod workspace;
 
 pub use backend::{Client, HyprBackend, Monitor};
+pub use binds::Bind;
 pub use model::{RuleEdit, RuleSet, WindowRule, WorkspaceRule};
 pub use store::Paths;
