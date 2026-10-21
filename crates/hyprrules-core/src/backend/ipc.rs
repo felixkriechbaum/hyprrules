@@ -7,6 +7,7 @@ use serde::Deserialize;
 
 use super::{Client, HyprBackend, Monitor};
 use crate::store::Paths;
+use crate::workspace;
 
 /// Talks to Hyprland over its request socket (same protocol as `hyprctl`).
 pub struct IpcBackend {
@@ -61,6 +62,32 @@ impl HyprBackend for IpcBackend {
         let mut clients: Vec<Client> = self.request_json("clients")?;
         clients.retain(|c| !c.class.is_empty());
         Ok(clients)
+    }
+
+    fn workspaces(&self) -> Result<Vec<String>> {
+        #[derive(Deserialize)]
+        struct Workspace {
+            id: i64,
+            name: String,
+        }
+        #[derive(Deserialize)]
+        struct WorkspaceRule {
+            #[serde(rename = "workspaceString")]
+            workspace: String,
+        }
+
+        // Workspaces that currently exist.
+        let mut found: Vec<String> = self
+            .request_json::<Vec<Workspace>>("workspaces")?
+            .iter()
+            .filter_map(|w| workspace::from_ipc(w.id, &w.name))
+            .collect();
+        // Workspaces defined in the config, even if empty right now. Best
+        // effort: the answer format may differ between Hyprland versions.
+        if let Ok(rules) = self.request_json::<Vec<WorkspaceRule>>("workspacerules") {
+            found.extend(rules.iter().filter_map(|r| workspace::from_config(&r.workspace)));
+        }
+        Ok(workspace::sorted(found))
     }
 
     fn reload(&self) -> Result<()> {

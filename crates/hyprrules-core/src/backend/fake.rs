@@ -61,6 +61,10 @@ impl HyprBackend for FakeBackend {
         Ok(self.clients.clone())
     }
 
+    fn workspaces(&self) -> Result<Vec<String>> {
+        Ok(["1", "2", "3", "name:G"].map(String::from).to_vec())
+    }
+
     fn reload(&self) -> Result<()> {
         Ok(())
     }

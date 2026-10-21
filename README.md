@@ -20,6 +20,8 @@ hl.window_rule({
 - **App rules** per window class: workspace (optionally silent), floating, fixed size, opacity, pin.
   Pick the class from running windows instead of writing regex by hand.
 - **Workspace → monitor** bindings, using the monitors Hyprland actually reports.
+- **Workspace detection**: numbered and named workspaces (e.g. `name:G`) are read from Hyprland
+  (existing workspaces plus those defined in the config); anything else can be typed in.
 - **Drag & drop ordering**: later rules take precedence, just like in Hyprland.
 
 ## How it works

@@ -4,11 +4,12 @@
 
 use std::rc::Rc;
 
-use hyprrules_core::{RuleEdit, RuleSet, WindowRule};
+use hyprrules_core::{RuleEdit, RuleSet, WindowRule, workspace};
 use relm4::adw::prelude::*;
 use relm4::{ComponentSender, adw, gtk};
 
-use crate::ui::{MAX_WORKSPACE, delete_button};
+use crate::ui::delete_button;
+use crate::workspace_picker::WorkspacePicker;
 use crate::{App, Msg};
 
 const MAX_SIZE: f64 = 7680.0;
@@ -17,6 +18,7 @@ pub fn window_rule_row(
     index: usize,
     rule: &WindowRule,
     rules: &RuleSet,
+    workspaces: &[String],
     sender: &ComponentSender<App>,
 ) -> adw::ExpanderRow {
     let row = adw::ExpanderRow::builder()
@@ -42,15 +44,21 @@ pub fn window_rule_row(
 
     // Workspace
     let ws_on = switch_row("Workspace zuweisen", "", rule.workspace.is_some());
-    let ws_value = rule.workspace.as_deref().and_then(|w| w.parse().ok()).unwrap_or(1.0);
-    let ws = spin_row("Workspace", 1.0, MAX_WORKSPACE, 1.0, 0, ws_value);
+    let ws = WorkspacePicker::new("Workspace");
+    ws.set_choices(workspaces);
+    if let Some(selector) = &rule.workspace {
+        ws.select(selector);
+    }
     let silent = switch_row("Im Hintergrund öffnen", "Nicht automatisch zum Workspace wechseln", rule.silent);
-    enables(&ws_on, &[ws.upcast_ref(), silent.upcast_ref()]);
+    let [ws_combo, ws_entry] = ws.rows();
+    enables(&ws_on, &[ws_combo, ws_entry, silent.upcast_ref()]);
     let send_ws = {
         let (ws_on, ws, emit) = (ws_on.clone(), ws.clone(), emit.clone());
-        move || emit(RuleEdit::Workspace(ws_on.is_active().then(|| (ws.value() as u32).to_string())))
+        move || emit(RuleEdit::Workspace(ws_on.is_active().then(|| ws.selected()).flatten()))
     };
-    on_change(&ws_on, &ws, send_ws);
+    let send_toggle = send_ws.clone();
+    ws_on.connect_active_notify(move |_| send_toggle());
+    ws.connect_changed(send_ws);
     let e = emit.clone();
     silent.connect_active_notify(move |sw| e(RuleEdit::Silent(sw.is_active())));
 
@@ -91,9 +99,10 @@ pub fn window_rule_row(
     pin.connect_active_notify(move |sw| e(RuleEdit::Pin(sw.is_active())));
 
     let class = class_row(rule);
-    let editors: [&gtk::Widget; 11] = [
+    let editors: [&gtk::Widget; 12] = [
         ws_on.upcast_ref(),
-        ws.upcast_ref(),
+        ws_combo,
+        ws_entry,
         silent.upcast_ref(),
         float.upcast_ref(),
         size_on.upcast_ref(),
@@ -114,7 +123,7 @@ pub fn window_rule_row(
 pub fn summary(rule: &WindowRule, rules: &RuleSet) -> String {
     let mut parts = Vec::new();
     if let Some(ws) = &rule.workspace {
-        let mut part = format!("Workspace {ws}");
+        let mut part = format!("Workspace {}", workspace::label(ws));
         if let Some(bound) = rules.workspace_rules.iter().find(|w| &w.workspace == ws) {
             part.push_str(&format!(" auf {}", bound.monitor));
         }

@@ -1,14 +1,13 @@
 //! Widget construction. The [`App`] owns a [`Ui`] and reads form values
 //! from it directly; rule lists are rebuilt whenever the rules change.
 
-use hyprrules_core::{Client, Monitor, RuleSet};
+use hyprrules_core::{Client, Monitor, RuleSet, workspace};
 use relm4::adw::prelude::*;
 use relm4::gtk::gdk;
 use relm4::{ComponentSender, adw, gtk};
 
+use crate::workspace_picker::WorkspacePicker;
 use crate::{App, Msg, rule_row};
-
-pub const MAX_WORKSPACE: f64 = 10.0;
 
 pub struct Ui {
     pub toasts: adw::ToastOverlay,
@@ -18,9 +17,9 @@ pub struct Ui {
     workspace_rules: gtk::ListBox,
     pub client_combo: adw::ComboRow,
     pub class_entry: adw::EntryRow,
-    pub app_workspace: adw::SpinRow,
+    pub app_workspace: WorkspacePicker,
     pub silent: adw::SwitchRow,
-    pub ws_workspace: adw::SpinRow,
+    pub ws_workspace: WorkspacePicker,
     pub monitor_combo: adw::ComboRow,
 }
 
@@ -59,7 +58,7 @@ impl Ui {
         let s = sender.clone();
         client_combo.connect_selected_notify(move |row| s.input(Msg::ClientPicked(row.selected())));
         let class_entry = adw::EntryRow::builder().title("Fensterklasse").build();
-        let app_workspace = workspace_spin();
+        let app_workspace = WorkspacePicker::new("Workspace");
         let silent = adw::SwitchRow::builder()
             .title("Im Hintergrund öffnen")
             .subtitle("Nicht automatisch zum Workspace wechseln")
@@ -68,7 +67,7 @@ impl Ui {
         let new_app = group(
             "Neue App-Regel",
             "Weitere Eigenschaften (schwebend, Größe, Transparenz …) nach dem Hinzufügen per Aufklappen",
-            &[client_combo.upcast_ref(), class_entry.upcast_ref(), app_workspace.upcast_ref(), silent.upcast_ref()],
+            &[client_combo.upcast_ref(), class_entry.upcast_ref(), app_workspace.rows()[0], app_workspace.rows()[1], silent.upcast_ref()],
         );
         new_app.set_header_suffix(Some(&add_button(sender, Msg::AddWindowRule)));
         page.add(&new_app);
@@ -81,9 +80,9 @@ impl Ui {
             &[workspace_rules.upcast_ref()],
         ));
 
-        let ws_workspace = workspace_spin();
+        let ws_workspace = WorkspacePicker::new("Workspace");
         let monitor_combo = adw::ComboRow::builder().title("Monitor").build();
-        let new_ws = group("Neue Workspace-Zuordnung", "", &[ws_workspace.upcast_ref(), monitor_combo.upcast_ref()]);
+        let new_ws = group("Neue Workspace-Zuordnung", "", &[ws_workspace.rows()[0], ws_workspace.rows()[1], monitor_combo.upcast_ref()]);
         new_ws.set_header_suffix(Some(&add_button(sender, Msg::AddWorkspaceRule)));
         page.add(&new_ws);
 
@@ -120,10 +119,21 @@ impl Ui {
         self.monitor_combo.set_model(Some(&string_list(&screens)));
     }
 
-    pub fn set_rules(&self, rules: &RuleSet, monitors: &[Monitor], sender: &ComponentSender<App>) {
+    pub fn set_workspace_choices(&self, workspaces: &[String]) {
+        self.app_workspace.set_choices(workspaces);
+        self.ws_workspace.set_choices(workspaces);
+    }
+
+    pub fn set_rules(
+        &self,
+        rules: &RuleSet,
+        monitors: &[Monitor],
+        workspaces: &[String],
+        sender: &ComponentSender<App>,
+    ) {
         self.window_rules.remove_all();
         for (i, rule) in rules.window_rules.iter().enumerate() {
-            let row = rule_row::window_rule_row(i, rule, rules, sender);
+            let row = rule_row::window_rule_row(i, rule, rules, workspaces, sender);
             make_reorderable(&row, i, sender);
             self.window_rules.append(&row);
         }
@@ -135,7 +145,7 @@ impl Ui {
                 .find(|m| m.name == rule.monitor)
                 .map(monitor_label)
                 .unwrap_or_else(|| format!("{} (nicht verbunden)", rule.monitor));
-            let row = action_row(&format!("Workspace {}", rule.workspace), &monitor);
+            let row = action_row(&format!("Workspace {}", workspace::label(&rule.workspace)), &monitor);
             row.add_suffix(&delete_button(sender, Msg::RemoveWorkspaceRule(i)));
             self.workspace_rules.append(&row);
         }
@@ -226,12 +236,6 @@ fn action_row(title: &str, subtitle: &str) -> adw::ActionRow {
         .subtitle(subtitle)
         .use_markup(false)
         .build()
-}
-
-fn workspace_spin() -> adw::SpinRow {
-    let spin = adw::SpinRow::with_range(1.0, MAX_WORKSPACE, 1.0);
-    spin.set_title("Workspace");
-    spin
 }
 
 fn add_button(sender: &ComponentSender<App>, msg: Msg) -> gtk::Button {

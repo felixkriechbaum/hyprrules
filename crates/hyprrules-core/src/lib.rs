@@ -5,6 +5,7 @@ pub mod backend;
 pub mod lua;
 pub mod model;
 pub mod store;
+pub mod workspace;
 
 pub use backend::{Client, HyprBackend, Monitor};
 pub use model::{RuleEdit, RuleSet, WindowRule, WorkspaceRule};

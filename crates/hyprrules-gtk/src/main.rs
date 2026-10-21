@@ -2,9 +2,10 @@
 
 mod rule_row;
 mod ui;
+mod workspace_picker;
 
 use hyprrules_core::backend::{self, HyprBackend};
-use hyprrules_core::{Client, Monitor, Paths, RuleEdit, RuleSet, WindowRule};
+use hyprrules_core::{Client, Monitor, Paths, RuleEdit, RuleSet, WindowRule, workspace};
 use relm4::adw::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmApp, SimpleComponent, adw};
 
@@ -23,6 +24,8 @@ pub struct App {
     monitors: Vec<Monitor>,
     /// Running apps, one entry per window class.
     clients: Vec<Client>,
+    /// Workspaces Hyprland reports, as selectors.
+    workspaces: Vec<String>,
     dirty: bool,
     included: bool,
     ui: Ui,
@@ -76,6 +79,7 @@ impl SimpleComponent for App {
             rules,
             monitors: Vec::new(),
             clients: Vec::new(),
+            workspaces: Vec::new(),
             dirty: false,
             ui,
         };
@@ -103,7 +107,10 @@ impl SimpleComponent for App {
                     self.toast("Bitte eine Fensterklasse angeben oder eine laufende App wählen");
                     return;
                 }
-                let workspace = (self.ui.app_workspace.value() as u32).to_string();
+                let Some(workspace) = self.ui.app_workspace.selected() else {
+                    self.toast("Bitte einen Workspace wählen");
+                    return;
+                };
                 let mut rule = WindowRule::for_class(&class, workspace);
                 rule.silent = self.ui.silent.is_active();
                 self.rules.add_window_rule(rule);
@@ -143,7 +150,10 @@ impl SimpleComponent for App {
                     self.toast("Kein Monitor ausgewählt");
                     return;
                 };
-                let workspace = (self.ui.ws_workspace.value() as u32).to_string();
+                let Some(workspace) = self.ui.ws_workspace.selected() else {
+                    self.toast("Bitte einen Workspace wählen");
+                    return;
+                };
                 let monitor = monitor.name.clone();
                 self.rules.set_workspace_monitor(&workspace, &monitor);
                 self.changed(&sender);
@@ -201,11 +211,29 @@ impl App {
             }
             Err(e) => self.toast(&format!("Laufende Apps nicht lesbar: {e:#}")),
         }
+        match self.backend.workspaces() {
+            Ok(workspaces) => self.workspaces = workspaces,
+            Err(e) => self.toast(&format!("Workspaces nicht lesbar: {e:#}")),
+        }
         self.ui.set_pickers(&self.clients, &self.monitors);
     }
 
+    /// Workspaces from Hyprland plus those already used in rules, so a
+    /// rule's workspace is always selectable.
+    fn known_workspaces(&self) -> Vec<String> {
+        let mut known = self.workspaces.clone();
+        known.extend(self.rules.window_rules.iter().filter_map(|r| r.workspace.clone()));
+        known.extend(self.rules.workspace_rules.iter().map(|r| r.workspace.clone()));
+        if known.is_empty() {
+            known = (1..=5).map(|n| n.to_string()).collect();
+        }
+        workspace::sorted(known)
+    }
+
     fn rebuild_lists(&self, sender: &ComponentSender<Self>) {
-        self.ui.set_rules(&self.rules, &self.monitors, sender);
+        let workspaces = self.known_workspaces();
+        self.ui.set_workspace_choices(&workspaces);
+        self.ui.set_rules(&self.rules, &self.monitors, &workspaces, sender);
     }
 
     fn sync_state(&self) {

@@ -50,6 +50,8 @@ pub trait HyprBackend {
     fn label(&self) -> String;
     fn monitors(&self) -> Result<Vec<Monitor>>;
     fn clients(&self) -> Result<Vec<Client>>;
+    /// Known workspaces as selectors (`"2"`, `"name:G"`), sorted.
+    fn workspaces(&self) -> Result<Vec<String>>;
     /// Asks Hyprland to re-read its config.
     fn reload(&self) -> Result<()>;
     fn paths(&self) -> Paths;
