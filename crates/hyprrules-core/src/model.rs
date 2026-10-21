@@ -124,6 +124,46 @@ impl RuleSet {
         self.window_rules.insert(to.min(len - 1), rule);
     }
 
+    /// Index of the rule matching exactly this window class, if any.
+    pub fn rule_for_class(&self, class: &str) -> Option<usize> {
+        let regex = exact_regex(class);
+        self.window_rules.iter().position(|r| r.class == regex)
+    }
+
+    /// Puts an app on a workspace: updates its rule or creates one.
+    /// Returns the rule's index.
+    pub fn place_app(&mut self, class: &str, workspace: &str) -> usize {
+        match self.rule_for_class(class) {
+            Some(index) => {
+                self.window_rules[index].workspace = Some(workspace.to_owned());
+                index
+            }
+            None => {
+                self.add_window_rule(WindowRule::for_class(class, workspace));
+                self.window_rules.len() - 1
+            }
+        }
+    }
+
+    /// Removes the workspace from a rule; drops the rule if nothing is left.
+    /// Returns whether the rule was removed.
+    pub fn unplace_rule(&mut self, index: usize) -> bool {
+        let Some(rule) = self.window_rules.get_mut(index) else {
+            return false;
+        };
+        rule.workspace = None;
+        if rule.has_effects() {
+            return false;
+        }
+        self.window_rules.remove(index);
+        true
+    }
+
+    /// Lets Hyprland decide where the workspace goes again.
+    pub fn unbind_workspace(&mut self, workspace: &str) {
+        self.workspace_rules.retain(|r| r.workspace != workspace);
+    }
+
     /// Binds a workspace to a monitor, replacing an existing binding.
     pub fn set_workspace_monitor(&mut self, workspace: &str, monitor: &str) {
         match self
@@ -239,6 +279,36 @@ mod tests {
         let rule = &set.window_rules[0];
         assert_eq!(rule.workspace.as_deref(), Some("2"));
         assert!(!rule.float && rule.size.is_none() && rule.opacity.is_none());
+    }
+
+    #[test]
+    fn place_app_updates_existing_rule() {
+        let mut set = RuleSet::default();
+        assert_eq!(set.place_app("discord", "2"), 0);
+        assert_eq!(set.place_app("discord", "name:G"), 0);
+        assert_eq!(set.window_rules.len(), 1);
+        assert_eq!(set.window_rules[0].workspace.as_deref(), Some("name:G"));
+    }
+
+    #[test]
+    fn unplace_keeps_rules_with_other_effects() {
+        let mut set = RuleSet::default();
+        set.place_app("mpv", "1");
+        set.window_rules[0].apply(RuleEdit::Float(true));
+        assert!(!set.unplace_rule(0));
+        assert_eq!(set.window_rules[0].workspace, None);
+
+        set.place_app("kitty", "1");
+        assert!(set.unplace_rule(1));
+        assert_eq!(set.window_rules.len(), 1);
+    }
+
+    #[test]
+    fn unbind_workspace_removes_binding() {
+        let mut set = RuleSet::default();
+        set.set_workspace_monitor("2", "DP-1");
+        set.unbind_workspace("2");
+        assert!(set.workspace_rules.is_empty());
     }
 
     #[test]

@@ -1,0 +1,155 @@
+/* The desk is an illustration of the user's setup and keeps its own colors
+   in light and dark mode. Hyprland's default active border gradient
+   (#33ccff -> #00ff99) only marks "active" and "drops here". */
+
+.desk {
+  background-color: #2e3650;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.08) 1px, transparent 1.6px);
+  background-size: 18px 18px;
+  border-radius: 20px;
+  padding: 32px 28px 22px 28px;
+  color: white;
+}
+
+/* Monitor: gradient frame (focused only) > bezel > screen with workspace tiles */
+.frame {
+  padding: 2px;
+  border-radius: 13px;
+  margin-right: 14px;
+}
+
+.frame.focused {
+  background-image: linear-gradient(45deg, #33ccff, #00ff99);
+}
+
+.bezel {
+  background-color: #1a1c24;
+  border-radius: 11px;
+  padding: 6px;
+  box-shadow: 0 14px 26px rgba(0, 0, 0, 0.35);
+}
+
+.screen {
+  background-image: linear-gradient(160deg, #46598a, #2b3557);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.frame:drop(active) .bezel {
+  box-shadow: 0 0 0 2px #33ccff, 0 0 22px rgba(0, 255, 153, 0.45);
+}
+
+.stand {
+  background-color: #1a1c24;
+  min-width: 46px;
+  min-height: 8px;
+  border-radius: 0 0 8px 8px;
+}
+
+.monitor-name {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* Workspace tiles */
+.ws {
+  background-color: rgba(255, 255, 255, 0.06);
+  border: 1px dashed rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
+  padding: 4px 8px 8px 8px;
+  min-width: 58px;
+  min-height: 52px;
+  transition: background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.ws.filled {
+  background-color: rgba(255, 255, 255, 0.11);
+  border-style: solid;
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.ws:drop(active) {
+  background-color: rgba(51, 204, 255, 0.2);
+  border: 1px solid #33ccff;
+  box-shadow: 0 0 18px rgba(0, 255, 153, 0.4);
+}
+
+.ws-label {
+  color: white;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+
+.shelf {
+  border-top: 1px dashed rgba(255, 255, 255, 0.18);
+  padding-top: 14px;
+  min-height: 70px;
+  border-radius: 0;
+}
+
+.shelf:drop(active) {
+  background-color: rgba(51, 204, 255, 0.12);
+}
+
+.desk-caption {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* App stickers */
+.sticker {
+  color: #1a1c24;
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.28);
+  transition: transform 120ms ease;
+}
+
+.sticker:hover {
+  transform: rotate(-3deg) scale(1.06);
+}
+
+.sticker.c0 { background-color: #ff8fab; }
+.sticker.c1 { background-color: #ffd166; }
+.sticker.c2 { background-color: #7bdff2; }
+.sticker.c3 { background-color: #b8f2a0; }
+.sticker.c4 { background-color: #c3a6ff; }
+.sticker.c5 { background-color: #ffb38a; }
+
+/* Floating windows hover above the tiling layout. */
+.sticker.floating {
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.22), 0 8px 14px rgba(0, 0, 0, 0.25);
+  margin-bottom: 3px;
+}
+
+.sticker.off {
+  opacity: 0.45;
+}
+
+.sticker.selected {
+  box-shadow: 0 0 0 2px white, 0 0 0 4px #33ccff;
+}
+
+/* Tray of unplaced apps, follows the system theme */
+.tray {
+  background-color: alpha(@window_fg_color, 0.04);
+  border: 1px dashed alpha(@window_fg_color, 0.2);
+  border-radius: 16px;
+  padding: 16px 18px;
+}
+
+.tray:drop(active) {
+  border-color: @error_color;
+  background-color: alpha(@error_color, 0.08);
+}
+
+.desk flowboxchild,
+.tray flowboxchild {
+  padding: 0;
+  background: none;
+}

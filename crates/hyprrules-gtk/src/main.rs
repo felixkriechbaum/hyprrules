@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod desk;
 mod rule_row;
 mod ui;
 mod workspace_picker;
@@ -9,6 +10,7 @@ use hyprrules_core::{Client, Monitor, Paths, RuleEdit, RuleSet, WindowRule, work
 use relm4::adw::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmApp, SimpleComponent, adw};
 
+use desk::DeskState;
 use ui::Ui;
 
 const APP_ID: &str = "dev.felixkriechbaum.hyprrules";
@@ -26,6 +28,8 @@ pub struct App {
     clients: Vec<Client>,
     /// Workspaces Hyprland reports, as selectors.
     workspaces: Vec<String>,
+    /// Rule shown in the desk's inspector.
+    selected: Option<usize>,
     dirty: bool,
     included: bool,
     ui: Ui,
@@ -42,6 +46,16 @@ pub enum Msg {
     MoveWindowRule(usize, usize),
     AddWorkspaceRule,
     RemoveWorkspaceRule(usize),
+    // Desk
+    SelectRule(Option<usize>),
+    /// Running app (by class) dropped on a workspace.
+    PlaceApp(String, String),
+    PlaceRule(usize, String),
+    /// Rule dragged back to the tray.
+    UnplaceRule(usize),
+    /// Workspace dropped on a monitor, or on the shelf (None).
+    BindWorkspace(String, Option<String>),
+    AddApp(String),
     Refresh,
     Save,
 }
@@ -56,12 +70,13 @@ impl SimpleComponent for App {
     fn init_root() -> Self::Root {
         adw::ApplicationWindow::builder()
             .title("hyprrules")
-            .default_width(760)
-            .default_height(860)
+            .default_width(1180)
+            .default_height(840)
             .build()
     }
 
     fn init(_: (), root: Self::Root, sender: ComponentSender<Self>) -> ComponentParts<Self> {
+        relm4::set_global_css(include_str!("style.css"));
         let backend = backend::detect();
         let paths = backend.paths();
         let ui = Ui::build(&root, &backend.label(), &sender);
@@ -80,6 +95,7 @@ impl SimpleComponent for App {
             monitors: Vec::new(),
             clients: Vec::new(),
             workspaces: Vec::new(),
+            selected: None,
             dirty: false,
             ui,
         };
@@ -121,27 +137,65 @@ impl SimpleComponent for App {
             Msg::ToggleWindowRule(index, enabled) => {
                 if let Some(rule) = self.rules.window_rules.get_mut(index) {
                     rule.enabled = enabled;
-                    self.dirty = true;
-                    self.sync_state();
+                    self.edited(index, &sender);
                 }
             }
             Msg::EditWindowRule(index, edit) => {
                 if let Some(rule) = self.rules.window_rules.get_mut(index) {
                     rule.apply(edit);
-                    self.dirty = true;
-                    self.ui.update_summary(index, &self.rules);
-                    self.sync_state();
+                    self.edited(index, &sender);
                 }
+            }
+            Msg::SelectRule(index) => {
+                self.selected = index;
+                self.rebuild_desk(&sender);
+            }
+            Msg::PlaceApp(class, workspace) => {
+                self.selected = Some(self.rules.place_app(&class, &workspace));
+                self.changed(&sender);
+            }
+            Msg::PlaceRule(index, workspace) => {
+                if let Some(rule) = self.rules.window_rules.get_mut(index) {
+                    rule.workspace = Some(workspace);
+                    self.changed(&sender);
+                }
+            }
+            Msg::UnplaceRule(index) => {
+                if self.rules.unplace_rule(index) {
+                    self.selected = None;
+                }
+                self.changed(&sender);
+            }
+            Msg::BindWorkspace(workspace, monitor) => {
+                match monitor {
+                    Some(monitor) => self.rules.set_workspace_monitor(&workspace, &monitor),
+                    None => self.rules.unbind_workspace(&workspace),
+                }
+                self.changed(&sender);
+            }
+            Msg::AddApp(class) => {
+                self.selected = Some(match self.rules.rule_for_class(&class) {
+                    Some(index) => index,
+                    None => {
+                        let mut rule = WindowRule::for_class(&class, "");
+                        rule.workspace = None;
+                        self.rules.add_window_rule(rule);
+                        self.rules.window_rules.len() - 1
+                    }
+                });
+                self.changed(&sender);
             }
             Msg::RemoveWindowRule(index) => {
                 if index < self.rules.window_rules.len() {
                     self.rules.window_rules.remove(index);
+                    self.selected = None;
                     self.changed(&sender);
                 }
             }
             Msg::MoveWindowRule(from, to) => {
                 if from != to {
                     self.rules.move_window_rule(from, to);
+                    self.selected = None;
                     self.changed(&sender);
                 }
             }
@@ -230,10 +284,50 @@ impl App {
         workspace::sorted(known)
     }
 
+    /// Rebuilds every view: desk, inspector and rule list.
     fn rebuild_lists(&self, sender: &ComponentSender<Self>) {
         let workspaces = self.known_workspaces();
         self.ui.set_workspace_choices(&workspaces);
         self.ui.set_rules(&self.rules, &self.monitors, &workspaces, sender);
+        self.ui.set_inspector(self.selected, &self.rules, &workspaces, sender);
+        self.rebuild_desk(sender);
+    }
+
+    fn rebuild_desk(&self, sender: &ComponentSender<Self>) {
+        let workspaces = self.known_workspaces();
+        let state = DeskState {
+            rules: &self.rules,
+            monitors: &self.monitors,
+            workspaces: &workspaces,
+            clients: &self.clients,
+            selected: self.selected,
+        };
+        self.ui.desk.rebuild(&state, sender);
+        if self.selected.is_some() {
+            self.ui.set_inspector(self.selected, &self.rules, &workspaces, sender);
+        }
+    }
+
+    /// After an edit inside an open editor: refresh everything except the
+    /// editor being used, so it doesn't collapse or lose focus.
+    fn edited(&mut self, index: usize, sender: &ComponentSender<Self>) {
+        self.dirty = true;
+        let workspaces = self.known_workspaces();
+        let state = DeskState {
+            rules: &self.rules,
+            monitors: &self.monitors,
+            workspaces: &workspaces,
+            clients: &self.clients,
+            selected: self.selected,
+        };
+        self.ui.desk.rebuild(&state, sender);
+        if self.ui.desk_visible() {
+            self.ui.set_rules(&self.rules, &self.monitors, &workspaces, sender);
+        } else {
+            self.ui.update_summary(index, &self.rules);
+            self.ui.set_inspector(self.selected, &self.rules, &workspaces, sender);
+        }
+        self.sync_state();
     }
 
     fn sync_state(&self) {

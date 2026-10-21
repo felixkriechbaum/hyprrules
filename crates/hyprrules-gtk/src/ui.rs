@@ -6,13 +6,20 @@ use relm4::adw::prelude::*;
 use relm4::gtk::gdk;
 use relm4::{ComponentSender, adw, gtk};
 
+use crate::desk::Desk;
 use crate::workspace_picker::WorkspacePicker;
 use crate::{App, Msg, rule_row};
+
+const DESK_PAGE: &str = "desk";
 
 pub struct Ui {
     pub toasts: adw::ToastOverlay,
     pub banner: adw::Banner,
     pub save: gtk::Button,
+    stack: adw::ViewStack,
+    pub desk: Desk,
+    split: adw::OverlaySplitView,
+    inspector: gtk::Box,
     window_rules: gtk::ListBox,
     workspace_rules: gtk::ListBox,
     pub client_combo: adw::ComboRow,
@@ -38,9 +45,20 @@ impl Ui {
             .build();
         connect(&refresh, sender, Msg::Refresh);
 
+        let stack = adw::ViewStack::new();
+        let backend_label = gtk::Label::builder()
+            .label(backend)
+            .css_classes(["dim-label", "caption"])
+            .build();
         let header = adw::HeaderBar::new();
-        header.set_title_widget(Some(&adw::WindowTitle::new("hyprrules", backend)));
+        header.set_title_widget(Some(
+            &adw::ViewSwitcher::builder()
+                .stack(&stack)
+                .policy(adw::ViewSwitcherPolicy::Wide)
+                .build(),
+        ));
         header.pack_start(&refresh);
+        header.pack_start(&backend_label);
         header.pack_end(&save);
 
         let banner = adw::Banner::new(
@@ -86,10 +104,27 @@ impl Ui {
         new_ws.set_header_suffix(Some(&add_button(sender, Msg::AddWorkspaceRule)));
         page.add(&new_ws);
 
+        let desk = Desk::build(sender);
+        stack.add_titled_with_icon(&desk.root, Some(DESK_PAGE), "Schreibtisch", "video-display-symbolic");
+        stack.add_titled_with_icon(&page, Some("rules"), "Regeln", "view-list-symbolic");
+
+        // Inspector for the app clicked on the desk.
+        let inspector = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .build();
+        let split = adw::OverlaySplitView::builder()
+            .sidebar_position(gtk::PackType::End)
+            .min_sidebar_width(320.0)
+            .max_sidebar_width(380.0)
+            .show_sidebar(false)
+            .content(&stack)
+            .sidebar(&inspector)
+            .build();
+
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
         toolbar.add_top_bar(&banner);
-        toolbar.set_content(Some(&page));
+        toolbar.set_content(Some(&split));
 
         let toasts = adw::ToastOverlay::new();
         toasts.set_child(Some(&toolbar));
@@ -99,6 +134,10 @@ impl Ui {
             toasts,
             banner,
             save,
+            stack,
+            desk,
+            split,
+            inspector,
             window_rules,
             workspace_rules,
             client_combo,
@@ -117,6 +156,54 @@ impl Ui {
 
         let screens: Vec<String> = monitors.iter().map(monitor_label).collect();
         self.monitor_combo.set_model(Some(&string_list(&screens)));
+    }
+
+    pub fn desk_visible(&self) -> bool {
+        self.stack.visible_child_name().as_deref() == Some(DESK_PAGE)
+    }
+
+    /// Shows the editor for `selected` in the sidebar, or hides it.
+    pub fn set_inspector(
+        &self,
+        selected: Option<usize>,
+        rules: &RuleSet,
+        workspaces: &[String],
+        sender: &ComponentSender<App>,
+    ) {
+        while let Some(child) = self.inspector.first_child() {
+            self.inspector.remove(&child);
+        }
+        let Some(index) = selected.filter(|i| *i < rules.window_rules.len()) else {
+            self.split.set_show_sidebar(false);
+            return;
+        };
+
+        let close = gtk::Button::builder()
+            .icon_name("window-close-symbolic")
+            .tooltip_text("Schließen")
+            .css_classes(["flat", "circular"])
+            .build();
+        connect(&close, sender, Msg::SelectRule(None));
+        let header = adw::HeaderBar::builder()
+            .show_end_title_buttons(false)
+            .show_start_title_buttons(false)
+            .title_widget(&adw::WindowTitle::new("App-Regel", ""))
+            .build();
+        header.pack_end(&close);
+
+        let row = rule_row::window_rule_row(index, &rules.window_rules[index], rules, workspaces, sender);
+        row.set_expanded(true);
+        let list = boxed_list("");
+        list.append(&row);
+        let group = adw::PreferencesGroup::new();
+        group.add(&list);
+        let page = adw::PreferencesPage::new();
+        page.add(&group);
+        page.set_vexpand(true);
+
+        self.inspector.append(&header);
+        self.inspector.append(&page);
+        self.split.set_show_sidebar(true);
     }
 
     pub fn set_workspace_choices(&self, workspaces: &[String]) {
